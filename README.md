@@ -50,19 +50,14 @@ click, then refine it before passing it downstream.
 ## Turbo Post Processing
 
 Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
-node, with full-sequence, 64-frame, 16-frame, and custom batching modes.
-Processing overlaps with encoding into a temporary disk-backed video, with
-optional audio and independently controlled dual-pass RIFE.
-
-In 1.0.3, the former IMAGE and AUDIO outputs are replaced by a VIDEO output
-for Save Video. Existing workflows must reconnect this output to Save Video.
+node, with extra VRAM Optimizations to prevent OOM.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
 ## JSON Prompt Builder / JSON Prompt Splitter
 
-Build structured JSON with editable fields, nested objects and arrays, field
-colors, optional video count and duration, and wrapped text. Save/load preserves
+Build structured JSON with editable fields, nested objects and arrays, customizable field
+colors. Save/load preserves
 hidden fields and colors as metadata; hidden fields are omitted from the JSON output.
 
 JSON Prompt Splitter splits numbered prompts or a `videos` array into `prompt_1`,
