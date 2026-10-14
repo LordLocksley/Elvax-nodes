@@ -30,7 +30,8 @@ function installModeLayout(node) {
   const root = document.createElement("div");
   root.style.cssText = "position:relative;width:100%;height:100%;box-sizing:border-box;overflow:hidden;";
   const editor = document.createElement("textarea");
-  editor.spellcheck = false;
+  editor.spellcheck = true;
+  editor.addEventListener("contextmenu", (event) => event.stopPropagation());
   editor.style.cssText = "position:absolute;inset:0;width:100%;height:100%;box-sizing:border-box;resize:none;overflow:auto;padding:8px;border:1px solid #555;border-radius:4px;background:#202020;color:#ddd;font:12px monospace;line-height:1.45;outline:none;";
   const previewContent = document.createElement("pre");
   previewContent.style.cssText = "position:absolute;inset:0;margin:0;padding:8px 48px 8px 8px;overflow:auto;box-sizing:border-box;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid #555;border-radius:4px;background:#202020;color:#ddd;font:12px/1.45 sans-serif;user-select:text;";

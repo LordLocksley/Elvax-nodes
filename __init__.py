@@ -12,6 +12,8 @@ from .llm_turbo.nodes import LLMTurbo
 from .post_processing import PostProcessing
 from .queue_reference_map import QueueReferenceMap
 from .seed_nodes import ChainSeed, StageSeed
+from .json_prompt_builder import JSONPromptBuilder
+from .json_prompt_splitter import JSONPromptSplitter
 
 
 NODE_CLASS_MAPPINGS = {
@@ -29,6 +31,8 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxQueueReferenceMap": QueueReferenceMap,
     "ElvaxStageSeed": StageSeed,
     "ElvaxChainSeed": ChainSeed,
+    "ElvaxJSONPromptBuilder": JSONPromptBuilder,
+    "ElvaxJSONPromptSplitter": JSONPromptSplitter,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -46,6 +50,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxQueueReferenceMap": "Queue Reference Map",
     "ElvaxStageSeed": "Stage Seed",
     "ElvaxChainSeed": "Chain Seed",
+    "ElvaxJSONPromptBuilder": "JSON Prompt Builder",
+    "ElvaxJSONPromptSplitter": "JSON Prompt Splitter",
 }
 
 WEB_DIRECTORY = "./web"

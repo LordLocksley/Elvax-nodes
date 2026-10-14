@@ -117,7 +117,7 @@ function addStyles() {
     .elvax-queue-map__thumb { display: grid; width: 68px; height: 60px; place-items: center; overflow: hidden; border-radius: 4px; color: #aaa; background: #181818; font-size: 10px; text-align: center; }
     .elvax-queue-map__thumb img { width: 100%; height: 100%; object-fit: contain; }
     .elvax-queue-map__label { margin: 0 0 2px; color: var(--descrip-text, #aaa); font-size: 9px; letter-spacing: .04em; text-transform: uppercase; }
-    .elvax-queue-map__prompt { display: -webkit-box; overflow: hidden; color: var(--fg-color, #ddd); -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow-wrap: anywhere; }
+    .elvax-queue-map__prompt { display: -webkit-box; overflow: hidden; color: var(--fg-color, #ddd); -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow-wrap: anywhere; }
     .elvax-queue-map__empty, .elvax-queue-map__error { padding: 14px 4px; color: var(--descrip-text, #aaa); }
     .elvax-queue-map__error { color: #ffaaaa; }
   `;

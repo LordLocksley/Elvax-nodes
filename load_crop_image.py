@@ -1,4 +1,5 @@
 import nodes
+import torch
 
 
 class LoadCropImage(nodes.LoadImage):
@@ -23,18 +24,22 @@ class LoadCropImage(nodes.LoadImage):
     def load_crop_image(self, image, crop_x=0, crop_y=0, crop_width=0, crop_height=0):
         images, mask = super().load_image(image)
         height, width = images.shape[1:3]
-        if mask.shape[-2:] != (height, width):
-            mask = mask.new_zeros((images.shape[0], height, width))
+        mask_matches_image = mask.shape[-2:] == (height, width)
         if crop_width <= 0 or crop_height <= 0:
+            if not mask_matches_image:
+                mask = mask.new_zeros((images.shape[0], height, width))
             return images, mask
 
         left = max(0, min(int(crop_x), width - 1))
         top = max(0, min(int(crop_y), height - 1))
         right = min(width, left + max(1, int(crop_width)))
         bottom = min(height, top + max(1, int(crop_height)))
-        images = images[:, top:bottom, left:right, :].contiguous()
+        images = images[:, top:bottom, left:right, :].clone(memory_format=torch.contiguous_format)
 
-        mask = mask[..., top:bottom, left:right].contiguous()
+        if mask_matches_image:
+            mask = mask[..., top:bottom, left:right].clone(memory_format=torch.contiguous_format)
+        else:
+            mask = mask.new_zeros((images.shape[0], bottom - top, right - left))
 
         return images, mask
 

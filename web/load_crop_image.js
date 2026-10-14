@@ -25,6 +25,18 @@ function normalizedRect(x1, y1, x2, y2) {
   };
 }
 
+function clampCrop(crop, width, height) {
+  if (!crop || crop.width <= 0 || crop.height <= 0) return null;
+  const x = clamp(Math.trunc(crop.x), 0, width - 1);
+  const y = clamp(Math.trunc(crop.y), 0, height - 1);
+  return {
+    x,
+    y,
+    width: Math.min(width - x, Math.max(1, Math.trunc(crop.width))),
+    height: Math.min(height - y, Math.max(1, Math.trunc(crop.height))),
+  };
+}
+
 function viewUrl(value) {
   if (!value || value === "None") return null;
   let path = String(value).replace(/\\/g, "/");
@@ -656,7 +668,8 @@ function installCropUI(node) {
   });
 
   function loadPreview(resetCrop) {
-    const url = viewUrl(imageWidget.value);
+    const value = imageWidget.value;
+    const url = viewUrl(value);
     source = null;
     imageWidth = 0;
     imageHeight = 0;
@@ -672,20 +685,28 @@ function installCropUI(node) {
     resizeCanvas();
     if (!url) return;
 
-    const path = String(imageWidget.value || "").toLowerCase();
+    const path = String(value || "").toLowerCase();
     const isVideo = /\.(mp4|m4v|mov|webm|avi|mkv|mpeg|mpg)(?:\s+\[(?:input|output|temp)\])?$/.test(path);
     const media = isVideo ? document.createElement("video") : new Image();
     source = media;
+    const isCurrent = () => source === media && imageWidget.value === value;
+    const applyRestoredCrop = () => {
+      const crop = clampCrop(appliedCrop, imageWidth, imageHeight);
+      if (crop && Object.keys(crop).some((key) => crop[key] !== appliedCrop[key])) {
+        setCropWidgets(crop);
+      }
+      appliedCrop = crop;
+      viewRect = crop ? { ...crop } : { x: 0, y: 0, width: imageWidth, height: imageHeight };
+    };
     if (isVideo) {
       media.muted = true;
       media.playsInline = true;
       media.preload = "metadata";
       media.addEventListener("loadeddata", () => {
+        if (!isCurrent()) return;
         imageWidth = media.videoWidth;
         imageHeight = media.videoHeight;
-        viewRect = appliedCrop
-          ? { ...appliedCrop }
-          : { x: 0, y: 0, width: imageWidth, height: imageHeight };
+        applyRestoredCrop();
         resizeCanvas();
         if (!initialSizeApplied) {
           initialSizeApplied = true;
@@ -694,20 +715,20 @@ function installCropUI(node) {
       }, { once: true });
     } else {
       media.onload = () => {
+        if (!isCurrent()) return;
         imageWidth = media.naturalWidth;
         imageHeight = media.naturalHeight;
-        viewRect = appliedCrop
-          ? { ...appliedCrop }
-          : { x: 0, y: 0, width: imageWidth, height: imageHeight };
+        applyRestoredCrop();
         resizeCanvas();
         if (!initialSizeApplied) {
           initialSizeApplied = true;
           scheduleMinimumNodeSize(true);
         }
-        persistPastedImage(media, imageWidget.value);
+        persistPastedImage(media, value);
       };
     }
     media.onerror = () => {
+      if (!isCurrent()) return;
       source = null;
       imageWidth = 0;
       imageHeight = 0;

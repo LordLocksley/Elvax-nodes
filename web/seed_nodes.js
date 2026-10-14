@@ -4,8 +4,18 @@ const STAGE_SEED = "ElvaxStageSeed";
 const CHAIN_SEED = "ElvaxChainSeed";
 const MAX_SEED = 1125899906842624;
 
-function stageSeeds() {
-  return (app.graph?._nodes || []).filter((node) => node.comfyClass === STAGE_SEED);
+function stageSeeds(graph = app.graph, found = [], visited = new Set()) {
+  if (!graph || visited.has(graph)) return found;
+  visited.add(graph);
+  for (const node of graph.nodes || graph._nodes || []) {
+    if (node.comfyClass === STAGE_SEED) found.push(node);
+    if (node.isSubgraphNode?.()) stageSeeds(node.subgraph, found, visited);
+  }
+  return found;
+}
+
+function containedStageSeeds(node) {
+  return node.isSubgraphNode?.() ? stageSeeds(node.subgraph) : [];
 }
 
 function seedWidget(node) {
@@ -103,6 +113,65 @@ function installChainSeed(node) {
   }, { serialize: false });
 }
 
+function installSubgraphSeedButton(node) {
+  if (!node.isSubgraphNode?.() || node.__elvaxSubgraphSeedButtonInstalled) return;
+  if (!containedStageSeeds(node).length) return;
+  node.__elvaxSubgraphSeedButtonInstalled = true;
+  const button = node.addWidget("button", "New Fixed", null, () => {
+    assignSeeds(containedStageSeeds(node), true);
+  }, { serialize: false });
+  const actionWidget = button || node.widgets?.[node.widgets.length - 1];
+  if (!actionWidget) return;
+  actionWidget.__elvaxSubgraphSeedButton = true;
+  moveSubgraphSeedButton(node, node.properties?.elvaxSubgraphSeedButtonPosition);
+}
+
+function subgraphSeedButton(node) {
+  return node.widgets?.find((widget) => widget.__elvaxSubgraphSeedButton);
+}
+
+function moveSubgraphSeedButton(node, position) {
+  const widgets = node.widgets;
+  const button = subgraphSeedButton(node);
+  if (!widgets || !button) return;
+  const currentIndex = widgets.indexOf(button);
+  if (currentIndex < 0) return;
+  widgets.splice(currentIndex, 1);
+  const index = position === undefined || position === null
+    ? widgets.length
+    : Math.max(0, Math.min(Number(position) || 0, widgets.length));
+  widgets.splice(index, 0, button);
+  node.properties ||= {};
+  node.properties.elvaxSubgraphSeedButtonPosition = index;
+  node.setDirtyCanvas?.(true, true);
+}
+
+async function chooseSubgraphSeedButtonPosition(node) {
+  const button = subgraphSeedButton(node);
+  if (!button) return;
+  const lastPosition = Math.max(1, node.widgets.length);
+  const currentPosition = node.widgets.indexOf(button) + 1;
+  const value = await app.extensionManager.dialog.prompt({
+    title: "Reorder New Fixed",
+    message: `Choose its position among this node's controls (1–${lastPosition}).`,
+    defaultValue: String(currentPosition),
+  });
+  if (value === null || value === undefined || value === "") return;
+  const position = Number.parseInt(value, 10);
+  if (!Number.isFinite(position)) return;
+  moveSubgraphSeedButton(node, position - 1);
+}
+
+function installSubgraphSeedButtons(graph = app.graph, visited = new Set()) {
+  if (!graph || visited.has(graph)) return;
+  visited.add(graph);
+  for (const node of graph.nodes || graph._nodes || []) {
+    if (!node.isSubgraphNode?.()) continue;
+    installSubgraphSeedButton(node);
+    installSubgraphSeedButtons(node.subgraph, visited);
+  }
+}
+
 app.registerExtension({
   name: "elvax.seed-nodes",
   async beforeRegisterNodeDef(nodeType, nodeData) {
@@ -137,5 +206,22 @@ app.registerExtension({
     };
     graphToPrompt.__elvaxSeedHook = true;
     app.graphToPrompt = graphToPrompt;
+  },
+  nodeCreated(node) {
+    if (node.comfyClass === STAGE_SEED) installSubgraphSeedButtons();
+    installSubgraphSeedButton(node);
+  },
+  loadedGraphNode(node) {
+    installSubgraphSeedButton(node);
+  },
+  getNodeMenuItems(node) {
+    if (!subgraphSeedButton(node)) return [];
+    return [{
+      content: "Reorder New Fixed…",
+      callback: () => chooseSubgraphSeedButtonPosition(node),
+    }];
+  },
+  async afterConfigureGraph() {
+    installSubgraphSeedButtons();
   },
 });

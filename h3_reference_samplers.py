@@ -5,12 +5,16 @@ used by ComfyUI-H3-Prompt-IDE. Its reference-input implementation is adapted
 from that GPL-3.0 project; see the attribution below and the pack LICENSE.
 """
 
+import logging
 import re
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from fractions import Fraction
 
+import comfy.model_management
 import comfy.patcher_extension
 import folder_paths
+import latent_preview
 import nodes
 from comfy_api.latest import InputImpl, Types, io
 from comfy_execution.graph_utils import ExecutionBlocker
@@ -503,6 +507,97 @@ def _sample_h3_stage(sampler_settings, previous_latent):
     return chain_latent, sampled_latent, trim_frames, chain
 
 
+class _H3LivePreview:
+    def __init__(self, preview_module, tiny_vae, node_id):
+        self.preview_module = preview_module
+        self.tiny_vae = tiny_vae
+        self.node_id = str(node_id)
+
+    def __call__(self, executor, noise, latent_image, sampler, sigmas,
+                 denoise_mask, callback, disable_pbar, seed, latent_shapes):
+        preview = self.preview_module
+        model_patcher = executor.class_obj.model_patcher
+        latent_format = model_patcher.model.latent_format
+        decoder = preview.load_tiny_vae_decoder(self.tiny_vae)
+        if decoder is not None and latent_shapes and int(latent_shapes[0][1]) != decoder.latent_channels:
+            logging.warning("H3 live preview: tiny VAE channel mismatch; using latent RGB previews")
+            decoder = None
+        client_id = preview.PromptServer.instance.client_id
+        pending = None
+
+        def encode_frames(frames):
+            try:
+                frames = preview._materialize_frames(frames, 1024)
+                if not frames:
+                    return
+                image, width, height = (None, 0, 0)
+                mime = "video/mp4"
+                if preview._MP4_AVAILABLE:
+                    image, width, height = preview._encode_mp4(frames, 12, 1024)
+                if not image:
+                    image, width, height = preview._encode_animated_webp(frames, 12, 80, 1024)
+                    mime = "image/webp"
+                if image:
+                    preview.PromptServer.instance.send_sync(
+                        "kj_preview_override",
+                        {"node_id": self.node_id, "image": image, "mime": mime,
+                         "w": width, "h": height, "fps": 12},
+                        client_id,
+                    )
+            except Exception:
+                logging.exception("H3 live preview encoding failed")
+
+        with ThreadPoolExecutor(max_workers=1, thread_name_prefix="h3-preview") as encoder:
+            def preview_callback(step, x0, x, total_steps):
+                nonlocal pending, decoder
+                # Preserve the final live update; other busy updates need no decode.
+                final_step = step + 1 == total_steps
+                if pending is not None and not pending.done() and final_step:
+                    pending.result()
+                if pending is None or pending.done():
+                    try:
+                        video_latent = preview._normalize_packed_x0(x0, latent_shapes, 0)
+                        frames = None
+                        if decoder is not None:
+                            try:
+                                frames, _ = preview._tiny_vae_decode_frames(
+                                    decoder, video_latent, max_frames=1024,
+                                    compile_preview=latent_format.compile_preview)
+                            except Exception:
+                                logging.exception("H3 tiny VAE preview failed; using latent RGB previews")
+                                decoder = None
+                        if frames is None:
+                            frames = preview._decode_video_frames_l2rgb(video_latent, latent_format, 1024)
+                        if frames is not None and len(frames):
+                            pending = encoder.submit(encode_frames, frames)
+                    except Exception:
+                        logging.exception("H3 live preview decoding failed")
+                if callback is not None:
+                    callback(step, x0, x, total_steps)
+
+            # Keep the existing KJ suppression of duplicate default previews, scoped
+            # to this sampling call. The original callback still records x0/progress.
+            previous_methods = []
+            classes = [latent_preview.LatentPreviewer]
+            seen = set()
+            for preview_class in classes:
+                if preview_class in seen:
+                    continue
+                seen.add(preview_class)
+                classes.extend(preview_class.__subclasses__())
+                if "decode_latent_to_preview_image" in preview_class.__dict__:
+                    previous_methods.append((preview_class, preview_class.__dict__["decode_latent_to_preview_image"]))
+                    preview_class.decode_latent_to_preview_image = preview._suppressed_preview_image
+            try:
+                return executor(
+                    noise, latent_image, sampler, sigmas, denoise_mask,
+                    preview_callback, disable_pbar, seed, latent_shapes=latent_shapes)
+            finally:
+                for preview_class, method in previous_methods:
+                    preview_class.decode_latent_to_preview_image = method
+                comfy.model_management.soft_empty_cache()
+
+
 class H3SamplerPreview(io.ComfyNode):
     @classmethod
     def define_schema(cls):
@@ -544,12 +639,10 @@ class H3SamplerPreview(io.ComfyNode):
         if tiny_vae and tiny_vae != "none":
             kj_node = nodes.NODE_CLASS_MAPPINGS.get("ModelPreviewOverrideKJ")
             kj_module = sys.modules.get(kj_node.__module__) if kj_node else None
-            try:
-                preview_wrapper = kj_module._PreviewOverrideWrapper
-            except AttributeError as error:
+            if kj_module is None:
                 raise RuntimeError(
                     "H3 Sampler Preview live previews require the "
-                    "KJNodes Model Preview Override component.") from error
+                    "KJNodes Model Preview Override component.")
 
             sampling_settings = dict(sampler_settings)
             stage = dict(sampler_settings["stage"])
@@ -557,15 +650,7 @@ class H3SamplerPreview(io.ComfyNode):
             model.add_wrapper_with_key(
                 comfy.patcher_extension.WrappersMP.OUTER_SAMPLE,
                 "elvax_h3_sampler_preview",
-                preview_wrapper(
-                    max_resolution=1024,
-                    node_id=cls.hidden.unique_id,
-                    jpeg_quality=80,
-                    suppress_default=True,
-                    preview_frames=1024,
-                    preview_fps=12,
-                    tiny_vae=tiny_vae,
-                ),
+                _H3LivePreview(kj_module, tiny_vae, cls.hidden.unique_id),
             )
             stage["model"] = model
             sampling_settings["stage"] = stage
