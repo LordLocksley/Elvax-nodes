@@ -30,6 +30,13 @@ the current image and its matching mask downstream, or restore the original.
 
 ![Load/Crop Image](assets/load-crop.gif)
 
+## Turbo Post Processing
+
+Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
+node, with extra VRAM Optimizations to prevent OOM.
+
+![Turbo Post Processing](assets/turbo-post-processing.jpg)
+
 ## Dynamic Pipe In / Dynamic Pipe Out
 
 Bundle connected values in input order and carry them through a single pipe.
@@ -46,13 +53,6 @@ Reroutes!
 click, then refine it before passing it downstream.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
-
-## Turbo Post Processing
-
-Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
-node, with extra VRAM Optimizations to prevent OOM.
-
-![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
 ## JSON Prompt Builder / JSON Prompt Splitter
 
@@ -106,6 +106,8 @@ decode workflow.
 
 Keep track of queued generations with their first reference image and prompt.
 See the current queue order and cancel an individual item directly from the node.
+
+![Queue Reference Map](assets/queue-reference-map.jpg)
 
 # Installation
 
