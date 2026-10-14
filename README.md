@@ -69,6 +69,8 @@ JSON Prompt Splitter splits numbered prompts or a `videos` array into `prompt_1`
 `prompt_2`, and subsequent outputs. Its visible output count follows the Builder's
 video count wirelessly within the workflow.
 
+![JSON Prompt Builder](assets/json-prompt-builder.jpg)
+
 ## H3 Staged Samplers
 
 Build a MiniMax H3 generation as a configurable stage-by-stage chain. Set shared
