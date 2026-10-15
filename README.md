@@ -44,7 +44,7 @@ with extra VRAM Optimizations to prevent OOM.
 
 ## Dynamic Pipe In / Dynamic Pipe Out
 
-Tidy your complex workflows with Dynamic Pipes 
+Tidy your complex workflows with Dynamic Pipes : 
 Dynamic Pipe In grows as you connect values; Dynamic Pipe Out unpacks them into
 separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
