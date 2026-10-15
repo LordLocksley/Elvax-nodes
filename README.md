@@ -146,7 +146,7 @@ The H3 tiny-VAE preview is credited to Kijai and [KJNodes](https://github.com/ki
 
 LLM Turbo is adapted from the GPL-3.0-licensed
 [ComfyUI-LLM-text-processor](https://github.com/KingManiya/ComfyUI-LLM-text-processor)
-by KingManiya.
+by KingManiya. with added Audio and MTP support + further UI and quality of life improvements.
 
 The H3 Extension Sampler is a modified derivative of
 [ComfyUI-H3-Motion-Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
@@ -159,4 +159,5 @@ Ethan Fel.
 Turbo Post Processing brings together ComfyUI's native Lanczos image scaling,
 RIFE 4.9 interpolation from [Fill-Nodes](https://github.com/filliptm/ComfyUI_Fill-Nodes)
 by filliptm, and Fast Film Grain from
-[VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl).
+[VRGameDevGirl's nodes](https://github.com/vrgamegirl19/comfyui-vrgamedevgirl) 
+and adds further performance and VRAM optimizations.
