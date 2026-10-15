@@ -17,10 +17,12 @@ Run local GGUF models directly inside ComfyUI at blazing speed through the
 llama.cpp backend, with no external LLM app, setup, or headache! 
 
 Use dynamically growing image or audio inputs, including image batches, 
-and use MTP (speculative decoding) where supported to speed gens even more. 
-Track the generation speed through `stats` . 
+and use MTP (speculative decoding) where supported to speed things even more.
+
+Track your generation speed through `stats`.
 
 Put your GGUF models in `models/LLM` or `models/text_encoders`
+
 image and audio inputs require a compatible model and projector (`mmproj`).
 
 ![LLM Turbo](assets/llm-turbo-v2.gif)
