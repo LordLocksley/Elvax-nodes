@@ -57,12 +57,12 @@ to detect and correct spelling and grammar errors.
 
 ## JSON Prompt Builder / JSON Prompt Splitter
 
-Build a structured JSON prompt with editable/nested fields, customizable field
-colours. Save/load preserves hidden fields and colours as metadata;
-hidden fields are omitted from the JSON output.
+Build a structured JSON prompt that you can feed to your favourite LLM
+with editable/nested fields, customizable field colours.
+Save/load preserves everything in the JSON including hidden fields and colours.
 
 JSON Prompt Splitter automatically detects and splits a big JSON,
-to the chosen number of videos specified in the JSON Prompt Builder
+to the chosen number of videos specified in the JSON Prompt Builder.
 
 ![JSON Prompt Builder](assets/json-prompt-builder.jpg)
 
