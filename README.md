@@ -49,20 +49,20 @@ Reroutes!
 
 ## Prompt Edit / Preview
 
-**Preview** and **edit** text in one node. Edit the preview text with one
-click, then refine it before passing it downstream.
+**Preview** and **edit** text in one node. Edit the preview text with one click,
+Supports the browser’s built-in spell checker
+to detect and correct spelling and grammar errors.
 
 ![Prompt Edit / Preview](assets/prompt-edit-preview.gif)
 
 ## JSON Prompt Builder / JSON Prompt Splitter
 
-Build structured JSON with editable fields, nested objects and arrays, customizable field
-colors. Save/load preserves
-hidden fields and colors as metadata; hidden fields are omitted from the JSON output.
+Build a structured JSON prompt with editable/nested fields, customizable field
+colours. Save/load preserves hidden fields and colours as metadata;
+hidden fields are omitted from the JSON output.
 
-JSON Prompt Splitter splits numbered prompts or a `videos` array into `prompt_1`,
-`prompt_2`, and subsequent outputs. Its visible output count follows the Builder's
-video count wirelessly within the workflow.
+JSON Prompt Splitter automatically detects and splits a big JSON,
+to the chosen number of videos specified in the JSON Prompt Builder
 
 ![JSON Prompt Builder](assets/json-prompt-builder.jpg)
 
