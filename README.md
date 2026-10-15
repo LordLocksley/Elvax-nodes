@@ -40,11 +40,9 @@ with extra VRAM Optimizations to prevent OOM.
 
 ## Dynamic Pipe In / Dynamic Pipe Out
 
-Bundle connected values in input order and carry them through a single pipe.
+Tidy your complex workflows with Dynamic Pipes 
 Dynamic Pipe In grows as you connect values; Dynamic Pipe Out unpacks them into
-separate outputs in their original order, keeping complex workflows
-tidy without changing the values themselves. Supports Set/Get nodes and
-Reroutes!
+separate outputs in their original order, Supports Set/Get nodes and Reroutes!
 
 ![Dynamic Pipe In and Dynamic Pipe Out](assets/dynamic-pipes.gif)
 
