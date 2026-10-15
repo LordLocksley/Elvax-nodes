@@ -32,8 +32,9 @@ the current image and its matching mask downstream, or restore the original.
 
 ## Turbo Post Processing
 
-Upscale with Lanczos, interpolate with RIFE 4.9, and add film grain in one
-fast node, with extra VRAM Optimizations to prevent OOM.
+Upscale with Lanczos to improve quality, interpolate with RIFE 4.9 to smooth motion,
+and add film grain to reduce the digital AI look, all in one fast node,
+with extra VRAM Optimizations to prevent OOM.
 
 ![Turbo Post Processing](assets/turbo-post-processing.jpg)
 
