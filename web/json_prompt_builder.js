@@ -604,8 +604,8 @@ function installNode(node) {
         return button;
       };
       actions.append(
-        move("↑", makeIcon('<path d="m7 14 5-5 5 5"/>'), -1, index === 0 || rowHidden),
-        move("↓", makeIcon('<path d="m7 10 5 5 5-5"/>'), 1, index === fields.length - 1 || rowHidden),
+        move("↑", makeIcon('<path d="m7 14 5-5 5 5"/>'), -1, index === 0),
+        move("↓", makeIcon('<path d="m7 10 5 5 5-5"/>'), 1, index === fields.length - 1),
       );
       const color = document.createElement("button");
       color.type = "button";
