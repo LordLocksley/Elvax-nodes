@@ -25,7 +25,9 @@ class JSONPromptSplitter:
         cleaned = self._clean_json(json_string)
         try:
             data = json.loads(cleaned)
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            if error.msg == "Extra data" and cleaned[error.pos:].strip() == '"':
+                cleaned = cleaned[:error.pos]
             repaired = self._escape_unescaped_inner_quotes(cleaned)
             repaired = re.sub(r",(\s*[}\]])", r"\1", repaired)
             try:
