@@ -46,6 +46,12 @@ function install(node) {
   node.properties ||= {};
   node.properties.elvaxVideoCompare ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
   const state = () => node.properties.elvaxVideoCompare;
+  function migrateAudioDefault() {
+    if (state().audioDefaultVersion === 1) return;
+    state().muted = false;
+    state().audioDefaultVersion = 1;
+  }
+  migrateAudioDefault();
   let disposed = false;
   let animation = 0;
   let playing = false;
@@ -54,7 +60,14 @@ function install(node) {
   let playbackMaster = null;
   let playbackDuration = 0;
   let renderedTime = null;
+  let seekRenderTarget = null;
+  let pendingFrameSteps = 0;
+  let frameStepInFlight = false;
+  let pendingTimelineSeek = null;
+  let resumeAfterSeek = false;
+  let timelineDragging = false;
   const frameQueues = new Map();
+  const frameIntervals = new Map();
   const frameCallbacks = new Map();
   let middlePointer = null;
   let hoveringVideo = false;
@@ -68,6 +81,9 @@ function install(node) {
   style.textContent = `
     .elvax-video-compare,.elvax-video-compare * {user-select:none;-webkit-user-select:none;}
     .elvax-video-compare .status {user-select:text;-webkit-user-select:text;}
+    .elvax-video-compare button,.elvax-video-compare input {outline:none !important;-webkit-tap-highlight-color:transparent;}
+    .elvax-video-compare input[type=range]:focus,.elvax-video-compare input[type=range]:focus-visible {outline:none !important;}
+    .elvax-video-compare input[type=range]::-moz-focus-outer {border:0;}
     .elvax-video-compare button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
     .elvax-video-compare button:disabled {opacity:.5;cursor:wait;}
     .elvax-video-compare .capture-row {display:flex;}
@@ -99,7 +115,6 @@ function install(node) {
     .elvax-video-compare .mode-button:disabled .before-after-switch {background:#292c30;box-shadow:inset 0 0 0 1px #454b52;}
     .elvax-video-compare .mode-button:disabled .before-after-switch::after {background:#81878e;}
     .elvax-video-compare .mode-button:disabled .before-after-arrows path {stroke:#747a80;}
-    .elvax-video-compare .mode-button:focus-visible {outline:1px solid #8bd4ff;outline-offset:-2px;}
     .elvax-video-compare .transport button {display:flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:3px;background:transparent;border:0;border-radius:4px;}
     .elvax-video-compare .transport button:hover {background:#ffffff24;}
     .elvax-video-compare .transport button.audio-source {background:#8bd4ff16;box-shadow:inset 0 0 0 1px #8bd4ff40;color:#8bd4ff;font-size:11px;font-weight:600;}
@@ -223,6 +238,7 @@ function install(node) {
     video.playsInline = true;
     video.muted = true;
     frameQueues.set(video, []);
+    frameIntervals.set(video, 1 / 30);
   }
   const [before, after] = videos;
   const frameSurfaces = videos.map(() => {
@@ -296,7 +312,7 @@ function install(node) {
   audioSource.addEventListener("pointerenter", updateAudioCaptionHover);
   audioSource.addEventListener("pointerleave", updateAudioCaptionHover);
   audioSource.addEventListener("click", () => {
-    state().audioSource = state().audioSource === "after" ? "before" : "after";
+    state().audioSource = audioVideo() === after ? "before" : "after";
     applyAudio();
     const selected = audioVideo();
     if (playing && selected.hasAttribute("src") && !selected.paused && !selected.ended) {
@@ -323,14 +339,15 @@ function install(node) {
   function audioVideo() {
     if (state().audioSource === "after" && state().after) return after;
     if (state().audioSource === "before" && state().before) return before;
-    if (inputKey(node, "before")) return before;
-    if (inputKey(node, "after")) return after;
+    if (state().before && inputKey(node, "before")) return before;
+    if (state().after && inputKey(node, "after")) return after;
     return state().before ? before : after;
   }
   function playbackVideo() {
     if (playbackMaster) return playbackMaster;
     const audio = audioVideo();
-    if (audio.hasAttribute("src")) return audio;
+    const target = seekRenderTarget ?? pendingTimelineSeek ?? renderedTime ?? state().time ?? 0;
+    if (audio.hasAttribute("src") && (!Number.isFinite(audio.duration) || target < audio.duration)) return audio;
     return after.hasAttribute("src") && (!before.hasAttribute("src") || (after.duration || 0) > (before.duration || 0)) ? after : before;
   }
   function fitFullscreenWidth() {
@@ -473,34 +490,41 @@ function install(node) {
   }
   function updateTime() {
     const duration = playbackDuration || comparisonDuration(videos);
-    const current = Math.min(renderedTime ?? state().time ?? 0, duration);
-    seek.max = String(duration);
-    seek.value = String(current);
-    time.textContent = `${timeLabel(current)} / ${timeLabel(duration)}`;
+    const active = videos.filter((video) => video.hasAttribute("src"));
+    const ended = active.length && active.every((video) => video.ended);
+    const current = Math.min(pendingTimelineSeek ?? seekRenderTarget ?? (ended ? duration : renderedTime) ?? state().time ?? 0, duration);
+    if (seek.max !== String(duration)) seek.max = String(duration);
+    if (seek.value !== String(current)) seek.value = String(current);
+    const text = `${timeLabel(current)} / ${timeLabel(duration)}`;
+    if (time.textContent !== text) time.textContent = text;
   }
   function seekBoth(value, force = false) {
     const duration = playbackDuration || comparisonDuration(videos);
     const target = Math.max(0, duration ? Math.min(value, duration) : value);
-    renderedTime = null;
+    if (playing || playStarting) {
+      pause();
+      resumeAfterSeek = true;
+    }
+    const active = videos.filter((video) => video.hasAttribute("src"));
+    if (!active.length) {
+      seekRenderTarget = null;
+      updateTime();
+      return;
+    }
+    const cached = active.map((video) => frameQueues.get(video).findLast((entry) =>
+      Math.abs(entry.time - target) < .000001 || (entry.time <= target && entry.end - target > .00001)));
+    if (cached.every(Boolean)) drawFrames(active, cached);
+    clearQueuedFrames();
+    seekRenderTarget = target;
     for (const video of videos) {
       video.playbackRate = 1;
       const time = Number.isFinite(video.duration) ? Math.min(target, video.duration) : target;
       if (video.readyState > 0 && (force || Math.abs(video.currentTime - time) > .001)) {
-        const frames = frameQueues.get(video);
-        const currentIndex = frames.findLastIndex((entry) =>
-          Math.abs(entry.time - time) < .00001 || (entry.time < time && time < entry.end));
-        const previous = currentIndex > 0 ? frames[currentIndex - 1] : null;
-        for (let index = frames.length - 1; index >= 0; index--) {
-          const entry = frames[index];
-          if (entry === previous || Math.abs(entry.time - time) < .00001 || (entry.time < time && time < entry.end)) continue;
-          entry.frame.close();
-          frames.splice(index, 1);
-        }
         video.currentTime = time;
       }
     }
     state().time = target;
-    renderFramePair();
+    for (const video of videos) captureFrame(video);
     updateTime();
   }
   function clearQueuedFrames(video) {
@@ -512,51 +536,87 @@ function install(node) {
   }
   function stepFrame(direction) {
     if (playing || playStarting) pause();
+    resumeAfterSeek = false;
+    if (pendingTimelineSeek !== null) flushTimelineSeek();
+    pendingFrameSteps += direction;
+    flushFrameSteps();
+  }
+  function finishFrameStep() {
+    if (!frameStepInFlight) return;
+    frameStepInFlight = false;
+    if (pendingFrameSteps) queueMicrotask(flushFrameSteps);
+  }
+  function flushFrameSteps() {
+    if (disposed || frameStepInFlight || seekRenderTarget !== null || !pendingFrameSteps) return;
     const clock = playbackVideo();
+    if (!clock.hasAttribute("src") || clock.readyState === 0) {
+      pendingFrameSteps = 0;
+      return;
+    }
     const queue = frameQueues.get(clock);
+    const steps = pendingFrameSteps;
+    pendingFrameSteps = 0;
     const current = renderedTime ?? state().time ?? 0;
-    const index = queue.findLastIndex((entry) => entry.time <= current + .00001);
-    const frame = index >= 0 ? queue[index] : queue[0];
-    let interval = frame ? frame.end - frame.time : 0;
-    const nextIndex = index >= 0 ? queue.findIndex((entry, i) => i > index && entry.time > frame.time + .000001) : -1;
-    const previousIndex = index > 0 ? queue.findLastIndex((entry, i) => i < index && entry.time < frame.time - .000001) : -1;
-    if (!(interval > 0) && nextIndex >= 0) interval = queue[nextIndex].time - frame.time;
-    if (!(interval > 0) && previousIndex >= 0) interval = frame.time - queue[previousIndex].time;
-    if (!(interval > 0)) interval = 1 / 30;
-    let target;
-    if (direction > 0 && nextIndex >= 0) target = queue[nextIndex].time;
-    else if (direction < 0 && previousIndex >= 0) target = queue[previousIndex].time;
-    else target = current + direction * interval;
+    const frame = queue.find((entry) => entry.time <= current && current < entry.end) ??
+      queue.reduce((closest, entry) => !closest || Math.abs(entry.time - current) < Math.abs(closest.time - current) ? entry : closest, null);
+    const interval = frame?.end > frame.time ? frame.end - frame.time : frameIntervals.get(clock) || 1 / 30;
+    // Seek inside the frame to avoid microsecond rounding across a frame boundary.
+    const target = (frame?.time ?? current) + steps * interval + interval / 4;
     const duration = comparisonDuration(videos);
+    frameStepInFlight = true;
     seekBoth(Math.max(0, Math.min(target, duration || target)), true);
+    if (seekRenderTarget === null) finishFrameStep();
   }
   function renderFramePair() {
+    if (disposed) return;
     const active = videos.filter((video) => video.hasAttribute("src"));
     if (!active.length) return;
+    if (active.some((video) => video.seeking || video.error)) return;
     const clock = playbackVideo();
     const queue = frameQueues.get(clock);
     for (let index = queue.length - 1; index >= 0; index--) {
       const candidate = queue[index];
-      if (renderedTime !== null && candidate.time <= renderedTime + .000001) continue;
-      const pair = active.map((video) => video === clock ? candidate : frameQueues.get(video).findLast((entry) =>
-        Math.abs(entry.time - candidate.time) < .00001 ||
-        (entry.time < candidate.time && candidate.time < entry.end - .00001) ||
-        (video.ended && candidate.time >= video.duration && entry === frameQueues.get(video).at(-1))));
+      const target = seekRenderTarget ?? candidate.time;
+      if (seekRenderTarget !== null) {
+        if (!(candidate.time <= target + .000001 && target < candidate.end) &&
+          !(target >= clock.duration && candidate === queue.at(-1))) continue;
+      } else if (renderedTime !== null && candidate.time <= renderedTime + .000001) continue;
+      const pair = active.map((video) => {
+        if (video === clock) return candidate;
+        const frames = frameQueues.get(video);
+        return frames.findLast((entry) => Math.abs(entry.time - candidate.time) < .000001) ??
+          frames.findLast((entry) =>
+          (entry.time <= target && entry.end - target > .00001) ||
+          (target >= video.duration && entry === frames.at(-1)));
+      });
       if (pair.some((entry) => !entry)) continue;
+      drawFrames(active, pair);
       active.forEach((video, videoIndex) => {
         const entry = pair[videoIndex];
-        const canvas = frameSurfaces[videos.indexOf(video)];
-        if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-        if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
-        canvas.getContext("2d").drawImage(entry.frame, 0, 0, canvas.width, canvas.height);
         const frames = frameQueues.get(video);
         while (frames.length > 1 && frames[1].time < entry.time) frames.shift().frame.close();
       });
       renderedTime = candidate.time;
       if (!playing) state().time = renderedTime;
+      const completedSeek = seekRenderTarget !== null;
+      seekRenderTarget = null;
       updateTime();
+      if (completedSeek) {
+        finishFrameStep();
+        flushTimelineSeek();
+        flushFrameSteps();
+        if (resumeAfterSeek && !timelineDragging && seekRenderTarget === null && pendingTimelineSeek === null) play();
+      }
       return;
     }
+  }
+  function drawFrames(active, pair) {
+    active.forEach((video, index) => {
+      const canvas = frameSurfaces[videos.indexOf(video)];
+      if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
+      if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+      canvas.getContext("2d").drawImage(pair[index].frame, 0, 0, canvas.width, canvas.height);
+    });
   }
   function pause(alignFrames = false) {
     const pauseTime = alignFrames && playbackMaster
@@ -564,6 +624,7 @@ function install(node) {
     playRequest++;
     playStarting = false;
     playing = false;
+    resumeAfterSeek = false;
     cancelAnimationFrame(animation);
     animation = 0;
     videos.forEach((video) => { video.pause(); video.playbackRate = 1; });
@@ -615,11 +676,19 @@ function install(node) {
     });
   }
   function togglePlayback() {
-    if (playing || playStarting) pause(true);
+    if (resumeAfterSeek) pause();
+    else if (playing || playStarting) pause(true);
     else play();
   }
   async function play() {
     if (playing || playStarting || disposed) return;
+    pendingFrameSteps = 0;
+    frameStepInFlight = false;
+    if (seekRenderTarget !== null || pendingTimelineSeek !== null) {
+      resumeAfterSeek = true;
+      return;
+    }
+    resumeAfterSeek = false;
     const active = videos.filter((video) => video.hasAttribute("src"));
     if (!active.length) return;
     playStarting = true;
@@ -634,24 +703,28 @@ function install(node) {
       ? selectedAudio
       : ready.reduce((longest, video) => (video.duration || 0) > (longest.duration || 0) ? video : longest);
     playbackDuration = comparisonDuration(ready);
-    if (playbackDuration && playbackMaster.currentTime >= playbackDuration - .025) seekBoth(0);
+    if (playbackDuration && playbackMaster.currentTime >= playbackDuration - .025) {
+      resumeAfterSeek = true;
+      seekBoth(0);
+      return;
+    }
     const toPlay = ready.filter((video) => !video.ended);
+    applyAudio();
     playing = true;
     updateStatus();
     playButton.querySelector("path").setAttribute("d", "M8 5v14M16 5v14");
+    cancelAnimationFrame(animation);
+    tick();
     const results = await Promise.allSettled(toPlay.map((video) => video.play()));
     if (request !== playRequest || disposed) return;
     const failed = results.flatMap((result, index) => result.status === "rejected" ? [{ video: toPlay[index], error: result.reason }] : []);
-    const masterError = failed.find(({ video }) => video === playbackMaster);
-    if (masterError) {
+    if (failed.length) {
       pause();
-      if (masterError.error?.name !== "AbortError") message.textContent = `Could not play the video: ${masterError.error?.message || "video unavailable"}`;
-      return;
+      const failure = failed[0];
+      if (failure.error?.name !== "AbortError") {
+        message.textContent = `Could not play the ${failure.video === before ? "Before" : "After"} video: ${failure.error?.message || "video unavailable"}`;
+      }
     }
-    for (const { video } of failed) video.pause();
-    if (failed.length) message.textContent = `Could not play the ${failed[0].video === before ? "Before" : "After"} video.`;
-    cancelAnimationFrame(animation);
-    tick();
   }
   function finishPlayback() {
     if (!playing) return;
@@ -666,6 +739,12 @@ function install(node) {
   }
   function show() {
     pause();
+    pendingTimelineSeek = null;
+    timelineDragging = false;
+    pendingFrameSteps = 0;
+    frameStepInFlight = false;
+    seekRenderTarget = null;
+    clearQueuedFrames();
     renderedTime = null;
     for (let index = 0; index < videos.length; index++) {
       const role = index ? "after" : "before";
@@ -674,14 +753,12 @@ function install(node) {
       if (entry?.filename) {
         const url = mediaURL(entry);
         if (video.getAttribute("src") !== url) {
-          clearQueuedFrames(video);
           frameSurfaces[index].width = frameSurfaces[index].height = 0;
           video.src = url;
           video.load();
         }
       }
       else {
-        clearQueuedFrames(video);
         frameSurfaces[index].width = frameSurfaces[index].height = 0;
         video.removeAttribute("src");
         video.load();
@@ -695,28 +772,44 @@ function install(node) {
     seekBoth(state().time || 0);
     updateTime();
   }
-  for (const video of videos) {
-    const captureFrame = () => {
-      if (disposed || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
-      const frame = new VideoFrame(video);
-      const time = frame.timestamp / 1000000;
-      const queue = frameQueues.get(video);
-      const duplicate = queue.findIndex((entry) => Math.abs(entry.time - time) < .000001);
-      if (duplicate >= 0) queue.splice(duplicate, 1)[0].frame.close();
-      queue.push({ frame, time, end: time + (frame.duration || 0) / 1000000 });
-      while (queue.length > 6) queue.shift().frame.close();
+  function captureFrame(video) {
+    if (disposed || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
+    const frame = new VideoFrame(video);
+    const time = frame.timestamp / 1000000;
+    if (frame.duration > 0) frameIntervals.set(video, frame.duration / 1000000);
+    const queue = frameQueues.get(video);
+    const duplicate = queue.findIndex((entry) => Math.abs(entry.time - time) < .000001);
+    if (duplicate >= 0) {
+      frame.close();
       renderFramePair();
-    };
+      return;
+    }
+    const previous = queue.at(-1);
+    if (!(frame.duration > 0) && playing && previous && time > previous.time && time - previous.time < .1) {
+      frameIntervals.set(video, time - previous.time);
+    }
+    queue.push({ frame, time, end: time + (frame.duration > 0 ? frame.duration / 1000000 : frameIntervals.get(video)) });
+    while (queue.length > 6) queue.shift().frame.close();
+    renderFramePair();
+  }
+  for (const video of videos) {
     const recordFrame = () => {
       if (disposed) return;
       frameCallbacks.set(video, video.requestVideoFrameCallback(recordFrame));
-      captureFrame();
+      captureFrame(video);
     };
     frameCallbacks.set(video, video.requestVideoFrameCallback(recordFrame));
-    video.addEventListener("loadeddata", captureFrame);
-    video.addEventListener("seeked", captureFrame);
-    video.addEventListener("emptied", () => clearQueuedFrames(video));
+    video.addEventListener("loadeddata", () => captureFrame(video));
+    video.addEventListener("seeked", () => {
+      captureFrame(video);
+      flushTimelineSeek();
+    });
+    video.addEventListener("emptied", () => {
+      clearQueuedFrames(video);
+      frameIntervals.set(video, 1 / 30);
+    });
     video.addEventListener("loadedmetadata", () => {
+      if (disposed) return;
       const target = playing && playbackMaster ? playbackMaster.currentTime : state().time || 0;
       const time = Number.isFinite(video.duration) ? Math.min(target, video.duration) : target;
       if (Math.abs(video.currentTime - time) > .001) video.currentTime = time;
@@ -737,13 +830,39 @@ function install(node) {
     });
     video.addEventListener("error", () => {
       if (!disposed && video.hasAttribute("src")) {
-        if (video === playbackMaster) pause();
-        else video.pause();
+        pause();
+        pendingTimelineSeek = null;
+        pendingFrameSteps = 0;
+        frameStepInFlight = false;
+        seekRenderTarget = null;
         message.textContent = `Could not load the ${video === before ? "Before" : "After"} video: ${video.error?.message || "video unavailable"}`;
       }
     });
   }
-  seek.addEventListener("input", () => seekBoth(Number(seek.value)));
+  function flushTimelineSeek(final = false) {
+    if (disposed || pendingTimelineSeek === null) return;
+    if (!final && (seekRenderTarget !== null || videos.some((video) => video.seeking))) return;
+    const target = pendingTimelineSeek;
+    pendingTimelineSeek = null;
+    seekBoth(target);
+  }
+  function finishTimelineSeek() {
+    timelineDragging = false;
+    flushTimelineSeek(true);
+    if (resumeAfterSeek && seekRenderTarget === null && pendingTimelineSeek === null) play();
+  }
+  seek.addEventListener("pointerdown", (event) => {
+    if (event.button === 0) timelineDragging = true;
+  });
+  seek.addEventListener("input", () => {
+    pendingFrameSteps = 0;
+    frameStepInFlight = false;
+    pendingTimelineSeek = Number(seek.value);
+    updateTime();
+    flushTimelineSeek();
+  });
+  seek.addEventListener("change", finishTimelineSeek);
+  seek.addEventListener("pointercancel", finishTimelineSeek);
   volume.addEventListener("input", () => { state().volume = Number(volume.value); state().muted = false; applyAudio(); });
   function hoverDivider(event) {
     if (event.buttons || state().mode !== "split" || !state().before || !state().after) return;
@@ -835,7 +954,7 @@ function install(node) {
     button.type = "button";
     button.className = "capture";
     button.textContent = `Load : ${role === "before" ? "Before" : "After"} Video`;
-      button.title = `Load a video from the ${role}_video socket.`;
+    button.title = `Load a video from the ${role}_video socket.`;
     button.addEventListener("click", () => capture(role, button));
     captureButtons.set(role, button);
     buttons.append(button);
@@ -843,9 +962,9 @@ function install(node) {
   function updateLoadButtons() {
     for (const [role, button] of captureButtons) {
       const input = node.inputs?.[inputSlot(node, role)];
-        button.title = input?.link == null
-          ? `Connect a video output to the ${role}_video socket.`
-          : `Load a video from the ${role}_video socket.`;
+      button.title = input?.link == null
+        ? `Connect a video output to the ${role}_video socket.`
+        : `Load a video from the ${role}_video socket.`;
       button.disabled = Boolean(button.__elvaxLoading) || input?.link == null;
     }
   }
@@ -950,6 +1069,7 @@ function install(node) {
     const result = oldConfigured?.apply(this, arguments);
     this.properties.elvaxVideoCompare ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
     this.properties.elvaxVideoCompare = JSON.parse(JSON.stringify(this.properties.elvaxVideoCompare));
+    migrateAudioDefault();
     updateLoadButtons();
     enforceMinimumSize();
     show();
