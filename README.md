@@ -112,6 +112,20 @@ See the current queue order and cancel an individual item directly from the node
 
 ![Queue Reference Map](assets/queue-reference-map.jpg)
 
+## Video Compare
+
+Connect the source videos to the `before_video` and `after_video` sockets, then use
+**Load the Before Video** and **Load the After Video** to store each version.
+Compare using the hover Slider, Side by Side, or Overlay with a blend slider between the Before/After labels.
+All modes share playback controls; the B/A switch selects Before or After audio.
+Captures are saved locally under `input/Elvax/video_compare` and remembered by the workflow.
+
+## Group toggles
+
+Groups show an always-visible ON/OFF switch to enable or bypass their nodes.
+Right-click the switch to hide it, or the group header to show it again.
+Visibility is saved per group; rgthree's header buttons return when the switch is hidden.
+
 # Installation
 
 ### ComfyUI Manager

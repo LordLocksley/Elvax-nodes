@@ -16,7 +16,7 @@ import av
 import torch
 import nodes
 from comfy.utils import ProgressBar
-from post_processing import PostProcessing
+from post_processing import PostProcessing, Types, video_encoder_options
 
 
 class LinearRife:
@@ -35,6 +35,31 @@ class LinearRife:
 
 
 class PostProcessingTests(unittest.TestCase):
+    def test_compression_settings_and_encoded_output(self):
+        inputs = PostProcessing.INPUT_TYPES()["required"]
+        names = list(inputs)
+        self.assertEqual(names[names.index("saturation_mix") + 1:names.index("saturation_mix") + 3],
+                         ["compress", "crf"])
+        self.assertTrue(inputs["compress"][1]["default"])
+        self.assertEqual(inputs["crf"][1]["default"], 18)
+        images = torch.rand(12, 64, 64, 3)
+        sizes = []
+        for compress, crf, expected in [(False, 22, 0), (True, 18, 18), (True, 22, 22)]:
+            with self.subTest(compress=compress, crf=crf), \
+                    patch("post_processing.video_encoder_options", wraps=video_encoder_options) as options:
+                video, fps, _ = PostProcessing().process(
+                    images, upscale=False, interpolate=False, grain=False, compress=compress, crf=crf)
+                self.addCleanup(video._elvax_temp_dir.cleanup)
+                options.assert_called_once_with(Types.VideoCodec.H264, expected, "ultrafast")
+                path = os.path.join(video._elvax_temp_dir.name, "video.mp4")
+                sizes.append(os.path.getsize(path))
+                with av.open(path) as container:
+                    self.assertEqual(container.streams.video[0].pix_fmt, "yuv420p")
+                    self.assertEqual(len(list(container.decode(video=0))), len(images))
+                self.assertEqual(fps, 24)
+        self.assertLess(sizes[1], sizes[0])
+        self.assertLess(sizes[2], sizes[0])
+
     def test_interpolated_order_and_frame_reuse_across_modes(self):
         images = torch.linspace(0, 0.9, 70).view(70, 1, 1, 1).expand(70, 16, 16, 3)
         for mode, upscale in [(mode, upscale) for mode in PostProcessing._GROUP_MODES for upscale in (False, True)]:
@@ -205,7 +230,7 @@ class PostProcessingTests(unittest.TestCase):
         received = []
         inference_counts = []
 
-        def collect(path, fps, batches, cancelled, timings):
+        def collect(path, fps, batches, cancelled, timings, crf=0):
             while True:
                 batch = batches.get(timeout=5)
                 if batch is None:

@@ -94,7 +94,9 @@ function installPreview(node) {
   root.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;contain:size;width:100%;height:100%;min-height:${MIN_PREVIEW_HEIGHT}px;overflow:hidden;background:#111;`;
   const stage = document.createElement("div");
   stage.tabIndex = -1;
-  stage.style.cssText = "position:relative;display:flex;align-items:center;justify-content:center;width:100%;height:100%;overflow:hidden;background:#111;outline:none;";
+  stage.style.cssText = "position:relative;display:flex;flex-direction:column;align-items:center;width:100%;height:100%;overflow:hidden;background:#111;outline:none;";
+  const viewport = document.createElement("div");
+  viewport.style.cssText = "position:relative;display:flex;flex:1;align-items:center;justify-content:center;width:100%;min-height:0;overflow:hidden;";
   stage.addEventListener("fullscreenchange", () => {
     if (document.fullscreenElement === stage) stage.focus();
   });
@@ -132,7 +134,7 @@ function installPreview(node) {
 
   const transport = document.createElement("div");
   transport.className = "elvax-h3-transport";
-  transport.style.cssText = "position:absolute;left:8px;right:8px;bottom:8px;display:none;align-items:center;gap:5px;box-sizing:border-box;padding:4px 6px;border:1px solid #ffffff24;border-radius:6px;background:#111d;color:#fff;font:12px Arial,sans-serif;z-index:3;";
+  transport.style.cssText = "display:none;flex:0 0 auto;align-self:stretch;align-items:center;gap:5px;margin:6px 8px 8px;box-sizing:border-box;padding:4px 6px;border:1px solid #ffffff24;border-radius:6px;background:#111d;color:#fff;font:12px Arial,sans-serif;";
   const transportStyle = document.createElement("style");
   transportStyle.textContent = `
     .elvax-h3-transport button { display:flex; flex:0 0 24px; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:transparent; color:#fff; cursor:pointer; }
@@ -270,6 +272,7 @@ function installPreview(node) {
   function updateMuteButton() {
     const player = currentPlayer();
     const muted = player.muted || player.volume === 0;
+    muteButton.style.color = muted ? "#aaa" : "#8bd4ff";
     const muteTitle = muted ? "Unmute" : "Mute";
     if (muteButton.title === muteTitle) return;
     muteButton.replaceChildren(makeToolbarIcon(muted
@@ -374,9 +377,10 @@ function installPreview(node) {
   const message = document.createElement("div");
   message.textContent = "Run the sampler to create a video preview.";
   message.style.cssText = "position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:12px;color:#aaa;font:12px sans-serif;text-align:center;pointer-events:none;";
-  stage.append(video);
-  if (liveImage) stage.append(liveImage, liveVideo);
-  stage.append(message, transport, toolbar);
+  viewport.append(video);
+  if (liveImage) viewport.append(liveImage, liveVideo);
+  viewport.append(message, toolbar);
+  stage.append(viewport, transport);
 
   root.append(stage);
 

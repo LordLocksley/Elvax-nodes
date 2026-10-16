@@ -37,6 +37,30 @@ function clampCrop(crop, width, height) {
   };
 }
 
+function normalizedRotation(value) {
+  return ((Math.floor((Number(value) || 0) / 90) % 4 + 4) % 4) * 90;
+}
+
+function rotateCrop(crop, imageHeight) {
+  if (!crop) return null;
+  return { x: imageHeight - crop.y - crop.height, y: crop.x, width: crop.height, height: crop.width };
+}
+
+function drawImageView(context, source, view, width, height, rotation, imageWidth, imageHeight) {
+  if (!rotation) {
+    context.drawImage(source, view.x, view.y, view.width, view.height, 0, 0, width, height);
+    return;
+  }
+  context.save();
+  context.scale(width / view.width, height / view.height);
+  context.translate(-view.x, -view.y);
+  if (rotation === 90) context.transform(0, 1, -1, 0, imageWidth, 0);
+  else if (rotation === 180) context.transform(-1, 0, 0, -1, imageWidth, imageHeight);
+  else context.transform(0, -1, 1, 0, 0, imageHeight);
+  context.drawImage(source, 0, 0);
+  context.restore();
+}
+
 function viewUrl(value) {
   if (!value || value === "None") return null;
   let path = String(value).replace(/\\/g, "/");
@@ -60,10 +84,11 @@ function viewUrl(value) {
 function installCropUI(node) {
   if (node.__elvaxLoadCropInstalled) return;
   const imageWidget = node.widgets?.find((widget) => widget.name === "image");
+  const rotationWidget = node.widgets?.find((widget) => widget.name === "rotation");
   const cropWidgets = Object.fromEntries(
     CROP_WIDGETS.map((name) => [name, node.widgets?.find((widget) => widget.name === name)]),
   );
-  if (!imageWidget || CROP_WIDGETS.some((name) => !cropWidgets[name])) return;
+  if (!imageWidget || !rotationWidget || CROP_WIDGETS.some((name) => !cropWidgets[name])) return;
   node.__elvaxLoadCropInstalled = true;
 
   // Keep Comfy's upload control, but let this widget own the image preview.
@@ -73,11 +98,17 @@ function installCropUI(node) {
     set: () => {},
   });
 
-  for (const widget of Object.values(cropWidgets)) {
+  for (const widget of [...Object.values(cropWidgets), rotationWidget]) {
     widget.hidden = true;
     widget.type = "hidden";
     widget.computeSize = () => [0, -4];
   }
+
+  function hideRotationInput() {
+    const index = node.inputs.findIndex(input => input.name === "rotation");
+    if (index !== -1) node.removeInput(index);
+  }
+  hideRotationInput();
 
   const root = document.createElement("div");
   root.dataset.elvaxLoadCropPreview = "true";
@@ -115,10 +146,12 @@ function installCropUI(node) {
   }
 
   const restoreButton = makeButton("Restore");
-  restoreButton.title = "Restore the original image and remove all cropping.";
+  restoreButton.title = "Restore the original image and remove all cropping and rotation.";
   const cropButton = makeButton("Crop");
   cropButton.title = "Crop the selected area. Shortcut: press Enter while hovering over the image.";
-  buttons.append(restoreButton, cropButton);
+  const rotateButton = makeButton("Rotate");
+  rotateButton.title = "Rotate the current image 90° clockwise.";
+  buttons.append(restoreButton, rotateButton, cropButton);
 
   const preview = document.createElement("div");
   preview.style.cssText = "display:flex;flex:1 1 auto;flex-direction:column;justify-content:center;align-items:center;min-height:0;margin:0 -10px -10px;overflow:hidden;border-radius:0 0 10px 10px;background:transparent;pointer-events:none;";
@@ -166,6 +199,7 @@ function installCropUI(node) {
   let source = null;
   let imageWidth = 0;
   let imageHeight = 0;
+  let rotation = 0;
   let viewRect = null;
   let selection = null;
   let appliedCrop = null;
@@ -194,6 +228,12 @@ function installCropUI(node) {
     });
   }
 
+  function setRotation(value) {
+    rotation = normalizedRotation(value);
+    rotationWidget.value = rotation;
+    rotationWidget.callback?.(rotation, app.canvas, node);
+  }
+
   function updateButtons() {
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
     const dimensions = selection || view;
@@ -206,9 +246,11 @@ function installCropUI(node) {
       && selection.y + selection.height >= view.height;
     cropButton.disabled = !selection || selection.width < 1 || selection.height < 1
       || isFullView;
-    restoreButton.disabled = !appliedCrop;
+    restoreButton.disabled = !appliedCrop && !rotation;
+    rotateButton.disabled = !source || !imageWidth || !imageHeight;
     styleButton(cropButton);
     styleButton(restoreButton);
+    styleButton(rotateButton);
   }
 
   function previewDimensions() {
@@ -280,7 +322,7 @@ function installCropUI(node) {
     ctx.clearRect(0, 0, width, height);
     if (source && imageWidth && imageHeight) {
       const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
-      ctx.drawImage(source, view.x, view.y, view.width, view.height, 0, 0, width, height);
+      drawImageView(ctx, source, view, width, height, rotation, imageWidth, imageHeight);
     } else {
       ctx.fillStyle = "#999";
       ctx.font = "13px sans-serif";
@@ -418,7 +460,7 @@ function installCropUI(node) {
     const image = document.createElement("canvas");
     image.width = Math.round(view.width);
     image.height = Math.round(view.height);
-    image.getContext("2d").drawImage(source, view.x, view.y, view.width, view.height, 0, 0, image.width, image.height);
+    drawImageView(image.getContext("2d"), source, view, image.width, image.height, rotation, imageWidth, imageHeight);
     return image;
   }
 
@@ -438,7 +480,7 @@ function installCropUI(node) {
     if (!url) return;
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
     const isCropped = view.x !== 0 || view.y !== 0 || view.width !== imageWidth || view.height !== imageHeight;
-    if (!isCropped) {
+    if (!isCropped && !rotation) {
       window.open(url, "_blank");
       return;
     }
@@ -659,10 +701,25 @@ function installCropUI(node) {
 
   restoreButton.addEventListener("click", () => {
     if (restoreButton.disabled) return;
+    cancelSelection();
+    if (rotation % 180) [imageWidth, imageHeight] = [imageHeight, imageWidth];
+    setRotation(0);
     appliedCrop = null;
     viewRect = { x: 0, y: 0, width: imageWidth, height: imageHeight };
     selection = null;
     setCropWidgets(null);
+    resizeCanvas();
+    node.graph?.setDirtyCanvas(true, true);
+  });
+
+  rotateButton.addEventListener("click", () => {
+    if (rotateButton.disabled) return;
+    cancelSelection();
+    appliedCrop = rotateCrop(appliedCrop, imageHeight);
+    [imageWidth, imageHeight] = [imageHeight, imageWidth];
+    setRotation(rotation + 90);
+    viewRect = appliedCrop ? { ...appliedCrop } : { x: 0, y: 0, width: imageWidth, height: imageHeight };
+    setCropWidgets(appliedCrop);
     resizeCanvas();
     node.graph?.setDirtyCanvas(true, true);
   });
@@ -675,10 +732,12 @@ function installCropUI(node) {
     imageHeight = 0;
     viewRect = null;
     if (resetCrop) {
+      setRotation(0);
       selection = null;
       appliedCrop = null;
       setCropWidgets(null);
     } else {
+      setRotation(rotationWidget.value);
       appliedCrop = readAppliedCrop();
       selection = null;
     }
@@ -691,6 +750,7 @@ function installCropUI(node) {
     source = media;
     const isCurrent = () => source === media && imageWidget.value === value;
     const applyRestoredCrop = () => {
+      if (rotation % 180) [imageWidth, imageHeight] = [imageHeight, imageWidth];
       const crop = clampCrop(appliedCrop, imageWidth, imageHeight);
       if (crop && Object.keys(crop).some((key) => crop[key] !== appliedCrop[key])) {
         setCropWidgets(crop);
@@ -770,6 +830,7 @@ function installCropUI(node) {
   node.onConfigure = function (...args) {
     const result = originalConfigure?.apply(this, args);
     requestAnimationFrame(() => {
+      hideRotationInput();
       loadPreview(false);
     });
     return result;

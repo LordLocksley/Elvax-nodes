@@ -14,9 +14,11 @@ import comfy.utils
 import torch
 from comfy_api.latest import InputImpl, Types
 from comfy_api.latest._input_impl.video_types import BT709_NCL, set_video_color_properties, video_encoder_options
+from server import PromptServer
 
 
 class PostProcessing:
+    _workflow_started = None
     SEARCH_ALIASES = ["elvax", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
     _UPSCALE_WORKERS = 6
     _GROUP_MODES = ("full sequence", "normal (64)", "low vram (16)", "custom")
@@ -39,6 +41,14 @@ class PostProcessing:
                 "grain": ("BOOLEAN", {"default": True}),
                 "grain_intensity": ("FLOAT", {"default": 0.025, "min": 0.001, "max": 1.0, "step": 0.001}),
                 "saturation_mix": ("FLOAT", {"default": 0.25, "min": 0.0, "max": 1.0, "step": 0.01}),
+                "compress": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Compresses the finished video to reduce file size. Disable for lossless encoding.",
+                }),
+                "crf": ("INT", {
+                    "default": 18, "min": 0, "max": 51, "step": 1,
+                    "tooltip": "Lower values preserve more detail and produce larger files.",
+                }),
                 "batching_mode": (list(cls._GROUP_MODES), {
                     "default": "normal (64)",
                     "tooltip": "Frames processed at a time. Smaller batches use less memory but may be slower.",
@@ -163,7 +173,7 @@ class PostProcessing:
         return images.mul(255).clamp_(0, 255).byte().cpu()
 
     @staticmethod
-    def _encode_video(path, frame_rate, batches, cancelled, timings):
+    def _encode_video(path, frame_rate, batches, cancelled, timings, crf=0):
         rate = Fraction(round(frame_rate * 1000), 1000)
         stream = None
         reformatter = VideoReformatter()
@@ -182,7 +192,7 @@ class PostProcessing:
                     stream.width = batch.shape[2]
                     stream.height = batch.shape[1]
                     stream.pix_fmt = "yuv420p"
-                    stream.options = video_encoder_options(Types.VideoCodec.H264, 0.0, "ultrafast")
+                    stream.options = video_encoder_options(Types.VideoCodec.H264, crf, "ultrafast")
                     set_video_color_properties(stream.codec_context, "sRGB")
                 for image in batch:
                     if cancelled.is_set():
@@ -206,8 +216,9 @@ class PostProcessing:
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
-                dual_pass_rife=False):
+                dual_pass_rife=False, compress=True, crf=18):
         started = time.perf_counter()
+        workflow_started = self._workflow_started
         frame_count = int(images.shape[0])
         if frame_count == 0:
             raise ValueError("Turbo Post Processing needs at least one frame.")
@@ -239,7 +250,7 @@ class PostProcessing:
         batches = queue.Queue(maxsize=1)
         cancelled = threading.Event()
         executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="elvax-video")
-        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings)
+        encoder = executor.submit(self._encode_video, path, fps, batches, cancelled, timings, crf if compress else 0)
 
         def submit_batch(batch):
             while True:
@@ -351,8 +362,23 @@ class PostProcessing:
         video = InputImpl.VideoFromList(
             [InputImpl.VideoFromFile(path)], complete_audio=audio_pass, codec=Types.VideoCodec.H264)
         video._elvax_temp_dir = temp_dir
-        stats = "Generation time: {:.2f}s | {}".format(
-            time.perf_counter() - started,
-            " | ".join("{}: {}".format(stage, "Off" if duration < 0.005 else "{:.2f}s".format(duration))
-                       for stage, duration in timings.items()))
+        finished_at = time.perf_counter()
+        stats = "Node generation time: {:.2f}s\n{}\n\nTotal Elapsed Time: {}".format(
+            finished_at - started,
+            "\n".join("{}: {}".format(stage, "Off" if duration < 0.005 else "{:.2f}s".format(duration))
+                      for stage, duration in timings.items()),
+            "{:.2f}s".format(finished_at - workflow_started) if workflow_started is not None else "Unavailable")
         return (video, fps, stats)
+
+
+if PromptServer.instance is not None:
+    _send_sync = PromptServer.instance.send_sync
+
+    def _track_workflow_time(event, data, sid=None):
+        if event == "execution_start":
+            PostProcessing._workflow_started = time.perf_counter()
+        elif event in ("execution_success", "execution_error", "execution_interrupted"):
+            PostProcessing._workflow_started = None
+        return _send_sync(event, data, sid)
+
+    PromptServer.instance.send_sync = _track_workflow_time

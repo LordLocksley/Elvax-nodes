@@ -67,6 +67,37 @@ class LoadCropImageTests(unittest.TestCase):
         self.assertTrue(torch.equal(image, self.images[:, 20:60, 10:40]))
         self.assertTrue(torch.equal(mask, self.alpha[:, 20:60, 10:40]))
 
+    def test_quarter_turns_rotate_image_and_alpha_exactly(self):
+        for turns in (1, 2, 3):
+            with self.subTest(turns=turns):
+                image, mask = self.crop(self.alpha, rotation=turns * 90)
+                self.assertTrue(torch.equal(image, torch.rot90(self.images, -turns, dims=(1, 2))))
+                self.assertTrue(torch.equal(mask, torch.rot90(self.alpha, -turns, dims=(-2, -1))))
+                self.assertTrue(image.is_contiguous())
+                self.assertTrue(mask.is_contiguous())
+
+    def test_rotating_an_applied_crop_keeps_the_same_selected_pixels(self):
+        image, mask = self.crop(self.alpha, rotation=90, crop_x=68, crop_y=10, crop_width=40, crop_height=30)
+        self.assertTrue(torch.equal(image, torch.rot90(self.images[:, 20:60, 10:40], -1, dims=(1, 2))))
+        self.assertTrue(torch.equal(mask, torch.rot90(self.alpha[:, 20:60, 10:40], -1, dims=(-2, -1))))
+
+    def test_rotated_opaque_image_gets_a_matching_mask(self):
+        image, mask = self.crop(torch.zeros(2, 64, 64), rotation=90)
+        self.assertEqual(tuple(image.shape), (2, 256, 128, 3))
+        self.assertEqual(tuple(mask.shape), (2, 256, 128))
+        self.assertEqual(torch.count_nonzero(mask), 0)
+
+    def test_four_turns_restore_original_pixels_without_changing_input(self):
+        original = self.images.clone()
+        image, mask = self.crop(self.alpha, rotation=360)
+        self.assertIs(image, self.images)
+        self.assertIs(mask, self.alpha)
+        self.assertTrue(torch.equal(self.images, original))
+
+    def test_rotation_changes_the_cache_fingerprint(self):
+        with patch.object(nodes.LoadImage, "IS_CHANGED", return_value="same image"):
+            self.assertNotEqual(LoadCropImage.IS_CHANGED("test.png"), LoadCropImage.IS_CHANGED("test.png", rotation=90))
+
 
 if __name__ == "__main__":
     unittest.main()

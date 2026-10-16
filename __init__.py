@@ -14,6 +14,7 @@ from .queue_reference_map import QueueReferenceMap
 from .seed_nodes import ChainSeed, StageSeed
 from .json_prompt_builder import JSONPromptBuilder
 from .json_prompt_splitter import JSONPromptSplitter
+from .video_compare import VideoCompare
 
 
 NODE_CLASS_MAPPINGS = {
@@ -33,6 +34,7 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxChainSeed": ChainSeed,
     "ElvaxJSONPromptBuilder": JSONPromptBuilder,
     "ElvaxJSONPromptSplitter": JSONPromptSplitter,
+    "ElvaxVideoCompare": VideoCompare,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -52,6 +54,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxChainSeed": "Chain Seed",
     "ElvaxJSONPromptBuilder": "JSON Prompt Builder",
     "ElvaxJSONPromptSplitter": "JSON Prompt Splitter",
+    "ElvaxVideoCompare": "Video Compare",
 }
 
 WEB_DIRECTORY = "./web"

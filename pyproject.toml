@@ -1,6 +1,6 @@
 [project]
 name = "elvax-nodes"
-version = "1.0.3"
+version = "1.0.4"
 description = """Convenience nodes for ComfyUI!
 
 - LLM TURBO: Run local LLMs faster, directly in ComfyUI

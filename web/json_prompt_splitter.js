@@ -5,6 +5,8 @@ const BUILDER_TYPE = "ElvaxJSONPromptBuilder";
 const MAX_PROMPTS = 32;
 const MIN_HEIGHT = 130;
 const SLOT_HEIGHT = 22;
+const BYPASS_TOOLTIP = "Automatically bypasses unused stage groups or enables them based on video count.";
+let configuringGraph = false;
 
 function isNode(node, type) {
   return node?.type === type || node?.comfyClass === type;
@@ -48,23 +50,101 @@ function sourceVideoCount(node) {
   const linkedBuilder = builderForSource(linkSource(node, input));
   const builders = (node.graph?._nodes || []).filter((candidate) => isNode(candidate, BUILDER_TYPE));
   const builder = linkedBuilder || (builders.length === 1 ? builders[0] : null);
-  const value = Number(widgetValue(builder, "video_count"));
-  return Number.isFinite(value) ? Math.max(0, Math.min(MAX_PROMPTS, Math.floor(value))) : 0;
+  const raw = widgetValue(builder, "video_count");
+  if (raw == null || String(raw).trim() === "") return null;
+  const value = Number(raw);
+  return Number.isInteger(value) && value >= 0 ? Math.min(MAX_PROMPTS, value) : null;
 }
 
 function requiredHeight(node) {
-  return Math.max(MIN_HEIGHT, 40 + Math.max(node.inputs?.length || 0, node.outputs?.length || 0) * SLOT_HEIGHT);
+  return Math.max(MIN_HEIGHT, node.computeSize()[1], 40 + Math.max(node.inputs?.length || 0, node.outputs?.length || 0) * SLOT_HEIGHT);
+}
+
+function splitters(graph = app.graph, found = [], visited = new Set()) {
+  if (!graph || visited.has(graph)) return found;
+  visited.add(graph);
+  for (const node of graph._nodes) {
+    if (isNode(node, NODE_TYPE)) found.push(node);
+    if (node.isSubgraphNode?.()) splitters(node.subgraph, found, visited);
+  }
+  return found;
+}
+
+function restoreStageModes(node, keep = new Set()) {
+  const modes = node.properties.elvaxStageModes;
+  if (!modes || !node.graph) return;
+  for (const [id, mode] of Object.entries(modes)) {
+    if (keep.has(id)) continue;
+    const target = node.graph.getNodeById(id);
+    if (target?.mode === 4) target.mode = mode;
+    delete modes[id];
+  }
+  if (!Object.keys(modes).length) delete node.properties.elvaxStageModes;
+}
+
+function syncStageGroups(node, count) {
+  if (!node.properties.bypass_unused_stages || node.mode !== 0) {
+    restoreStageModes(node);
+    return;
+  }
+  if (count === null) return;
+
+  for (const target of node.graph._nodes) target.updateArea();
+  const bypass = new Set();
+  const active = new Set();
+  const assignments = node.properties.elvaxStageGroups || [];
+  assignments.forEach((id, index) => {
+    if (id == null) return;
+    const group = node.graph._groups.find((group) => group.id === id);
+    if (!group) return;
+    group.recomputeInsideNodes();
+    for (const target of group.nodes) {
+      if (target === node) continue;
+      (index < count ? active : bypass).add(String(target.id));
+    }
+  });
+  for (const id of active) bypass.delete(id);
+  restoreStageModes(node, bypass);
+  for (const id of bypass) {
+    const target = node.graph.getNodeById(id);
+    if (target.mode === 4) continue;
+    node.properties.elvaxStageModes ||= {};
+    node.properties.elvaxStageModes[id] ??= target.mode;
+    target.mode = 4;
+  }
+}
+
+function syncStageAssignments(node) {
+  const enabled = node.properties.bypass_unused_stages === true;
+  node.__elvaxStageToggle.value = enabled;
+  if (!enabled) return;
+  if (!Array.isArray(node.properties.elvaxStageGroups)) node.properties.elvaxStageGroups = [];
+  const assignments = node.properties.elvaxStageGroups;
+  for (const group of node.graph._groups) {
+    const match = /^stage[\s_-]*(\d+)$/i.exec(group.title.trim());
+    if (!match) continue;
+    const stage = Number(match[1]);
+    if (stage < 1 || stage > MAX_PROMPTS) continue;
+    const assigned = assignments[stage - 1];
+    if (!assignments.includes(group.id) && !node.graph._groups.some(group => group.id === assigned)) {
+      assignments[stage - 1] = group.id;
+    }
+  }
 }
 
 function syncOutputs(node) {
+  if (!node.graph || configuringGraph) return;
   const previousOutputCount = node.outputs.length;
   const count = sourceVideoCount(node);
-  while (node.outputs.length > count) {
-    if (node.outputs.at(-1)?.links?.length) break;
-    node.removeOutput(node.outputs.length - 1);
-  }
-  while (node.outputs.length < count) {
-    node.addOutput(`prompt_${node.outputs.length + 1}`, "STRING");
+  if (count !== null || !node.__elvaxJSONPromptSplitterConfigured) {
+    const outputCount = count ?? 0;
+    while (node.outputs.length > outputCount) {
+      if (node.outputs.at(-1)?.links?.length) break;
+      node.removeOutput(node.outputs.length - 1);
+    }
+    while (node.outputs.length < outputCount) {
+      node.addOutput(`prompt_${node.outputs.length + 1}`, "STRING");
+    }
   }
   node.outputs.forEach((output, index) => {
     const name = `prompt_${index + 1}`;
@@ -75,18 +155,45 @@ function syncOutputs(node) {
     const height = requiredHeight(node);
     if (height > node.size[1]) node.setSize([node.size[0], height]);
   }
+  syncStageAssignments(node);
+  syncStageGroups(node, count);
   node.graph?.setDirtyCanvas(true, true);
 }
 
 function install(node) {
   if (node.__elvaxJSONPromptSplitterInstalled) return;
   node.__elvaxJSONPromptSplitterInstalled = true;
+  node.properties.bypass_unused_stages ??= false;
+  const toggle = node.addWidget("toggle", "bypass_unused_stages", node.properties.bypass_unused_stages, (value) => {
+    node.properties.bypass_unused_stages = value;
+    syncOutputs(node);
+  }, { serialize: false });
+  toggle.tooltip = BYPASS_TOOLTIP;
+  node.__elvaxStageToggle = toggle;
   const jsonInput = node.inputs?.find((input) => input.name === "json_string");
   if (jsonInput) jsonInput.label = "JSON";
+  const originalNodeConfigure = node.configure;
+  node.configure = function (data, ...args) {
+    const savedOutputCount = Array.isArray(data.outputs) ? data.outputs.length : null;
+    const result = originalNodeConfigure.call(this, data, ...args);
+    if (savedOutputCount !== null) {
+      while (this.outputs.length > savedOutputCount && !this.outputs.at(-1)?.links?.length) {
+        this.removeOutput(this.outputs.length - 1);
+      }
+    }
+    return result;
+  };
   const originalConfigure = node.onConfigure;
   node.onConfigure = function (...args) {
     this.__elvaxJSONPromptSplitterConfigured = true;
-    return originalConfigure?.apply(this, args);
+    const result = originalConfigure?.apply(this, args);
+    requestAnimationFrame(() => syncOutputs(this));
+    return result;
+  };
+  const originalRemoved = node.onRemoved;
+  node.onRemoved = function (...args) {
+    restoreStageModes(this);
+    return originalRemoved?.apply(this, args);
   };
   const originalConnectionsChange = node.onConnectionsChange;
   node.onConnectionsChange = function (...args) {
@@ -105,10 +212,20 @@ app.registerExtension({
   name: "elvax.json-prompt-splitter",
   setup() {
     window.setInterval(() => {
-      for (const node of app.graph?._nodes || []) {
-        if (isNode(node, NODE_TYPE)) syncOutputs(node);
-      }
+      for (const node of splitters()) syncOutputs(node);
     }, 150);
+    const originalGraphToPrompt = app.graphToPrompt;
+    app.graphToPrompt = function (...args) {
+      for (const node of splitters(args[0] || app.graph)) syncOutputs(node);
+      return originalGraphToPrompt.apply(this, args);
+    };
+  },
+  beforeConfigureGraph() {
+    configuringGraph = true;
+  },
+  afterConfigureGraph() {
+    configuringGraph = false;
+    for (const node of splitters()) syncOutputs(node);
   },
   nodeCreated(node) {
     if (isNode(node, NODE_TYPE)) install(node);

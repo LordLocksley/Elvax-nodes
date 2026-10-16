@@ -85,6 +85,7 @@ app.registerExtension({
     installToggle(node, "upscale", "UPSCALE (lanczos)", ["upscale_by"], refresh);
     installToggle(node, "interpolate", "INTERPOLATE (rife49)", ["interpolate_by", "dual_pass_rife"], refresh);
     installToggle(node, "grain", "FILM GRAIN", ["grain_intensity", "saturation_mix"], refresh);
+    installToggle(node, "compress", "COMPRESS", ["crf"], refresh);
     const mode = node.widgets?.find((widget) => widget.name === "batching_mode");
     if (mode && !mode.__elvaxBatchModeInstalled) {
       mode.__elvaxBatchModeInstalled = true;
@@ -100,6 +101,14 @@ app.registerExtension({
       node.__elvaxPostProcessingConfigureHook = true;
       const onConfigure = node.onConfigure;
       node.onConfigure = function (...args) {
+        const values = args[0]?.widgets_values;
+        const compressIndex = this.widgets?.findIndex((widget) => widget.name === "compress") ?? -1;
+        if (compressIndex >= 0 && typeof values?.[compressIndex] === "string") {
+          values.splice(compressIndex, 0, false, 18);
+          for (let index = compressIndex; index < values.length; index++) {
+            if (this.widgets[index]) this.widgets[index].value = values[index];
+          }
+        }
         const result = onConfigure?.apply(this, args);
         requestAnimationFrame(() => {
           labelAudioInput(this);
@@ -108,6 +117,7 @@ app.registerExtension({
             ["upscale", ["upscale_by"]],
             ["interpolate", ["interpolate_by", "dual_pass_rife"]],
             ["grain", ["grain_intensity", "saturation_mix"]],
+            ["compress", ["crf"]],
           ]) {
             const enabled = Boolean(this.widgets?.find((widget) => widget.name === toggleName)?.value);
             for (const name of names) {
