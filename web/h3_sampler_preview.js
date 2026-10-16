@@ -91,6 +91,7 @@ function installPreview(node) {
   let disposed = false;
 
   const root = document.createElement("div");
+  root.className = "elvax-h3-preview";
   root.style.cssText = `position:relative;display:flex;align-items:center;justify-content:center;contain:size;width:100%;height:100%;min-height:${MIN_PREVIEW_HEIGHT}px;overflow:hidden;background:#111;`;
   const stage = document.createElement("div");
   stage.tabIndex = -1;
@@ -137,6 +138,9 @@ function installPreview(node) {
   transport.style.cssText = "display:none;flex:0 0 auto;align-self:stretch;align-items:center;gap:5px;margin:6px 8px 8px;box-sizing:border-box;padding:4px 6px;border:1px solid #ffffff24;border-radius:6px;background:#111d;color:#fff;font:12px Arial,sans-serif;";
   const transportStyle = document.createElement("style");
   transportStyle.textContent = `
+    .elvax-h3-preview,.elvax-h3-preview * { user-select:none !important; -webkit-user-select:none !important; outline:none !important; -webkit-tap-highlight-color:transparent; }
+    .elvax-h3-preview:focus,.elvax-h3-preview *:focus,.elvax-h3-preview *:focus-visible { outline:none !important; box-shadow:none !important; }
+    .elvax-h3-preview input[type=range]::-moz-focus-outer,.elvax-h3-preview button::-moz-focus-inner { border:0; }
     .elvax-h3-transport button { display:flex; flex:0 0 24px; align-items:center; justify-content:center; width:24px; height:24px; padding:0; border:0; border-radius:4px; background:transparent; color:#fff; cursor:pointer; }
     .elvax-h3-transport button:hover { background:#ffffff24; }
     .elvax-h3-transport button svg { width:16px; height:16px; }
