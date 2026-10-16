@@ -4,7 +4,7 @@ import queue
 import tempfile
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from fractions import Fraction
 
 import av
@@ -18,7 +18,7 @@ from comfy_api.latest._input_impl.video_types import BT709_NCL, set_video_color_
 
 class PostProcessing:
     SEARCH_ALIASES = ["elvax", "turbo", "turbo post processing", "upscale", "upscale video", "interpolate", "interpolate video", "grain", "film grain", "rife"]
-    _UPSCALE_BATCH_SIZE = 64
+    _UPSCALE_WORKERS = 6
     _GROUP_MODES = ("full sequence", "normal (64)", "low vram (16)", "custom")
 
     @classmethod
@@ -33,7 +33,7 @@ class PostProcessing:
                 "original_fps": ("FLOAT", {"default": 24.0, "min": 0.1, "max": 240.0, "step": 0.1}),
                 "interpolate_by": ("INT", {"default": 2, "min": 2, "max": 10, "step": 1}),
                 "dual_pass_rife": ("BOOLEAN", {
-                    "default": True,
+                    "default": False,
                     "tooltip": "Runs RIFE in both directions and combines the results. May improve interpolation quality, but takes longer and uses more VRAM.",
                 }),
                 "grain": ("BOOLEAN", {"default": True}),
@@ -82,23 +82,35 @@ class PostProcessing:
             comfy.model_management.soft_empty_cache()
 
     @staticmethod
-    def _interpolate_group(images, interpolate_by, rife, model, ensemble, frame_cache, pbar):
-        output_frame_count = (images.shape[0] - 1) * interpolate_by + 1
-        output = torch.empty((output_frame_count, *images.shape[1:]), dtype=images.dtype, device="cpu")
-        output[::interpolate_by].copy_(images.detach().cpu())
+    def _interpolate_group(images, interpolate_by, rife, model, ensemble, frame_cache, pbar, drop_first=False):
+        output = torch.empty((4, *images.shape[1:]), dtype=images.dtype, device=rife.device)
+        count = 0
         img0 = frame_cache[0]
         if img0 is None:
             img0 = images[:1].permute(0, 3, 1, 2).to(rife.device)
+        if not drop_first:
+            output[0].copy_(img0[0].permute(1, 2, 0))
+            count = 1
         for index in range(images.shape[0] - 1):
             img1 = images[index + 1:index + 2].permute(0, 3, 1, 2).to(rife.device)
             for step in range(1, interpolate_by):
                 pred = rife.make_inference(model, img0, img1, step / interpolate_by, ensemble)
-                output[index * interpolate_by + step].copy_(
+                output[count].copy_(
                     pred[0].permute(1, 2, 0).detach().clamp(0, 1))
+                count += 1
                 pbar.update(1)
+                if count == 4:
+                    yield output
+                    count = 0
+            output[count].copy_(img1[0].permute(1, 2, 0))
+            count += 1
+            if count == 4:
+                yield output
+                count = 0
             img0 = img1
         frame_cache[0] = img0
-        return output
+        if count:
+            yield output[:count]
 
     @staticmethod
     def _grain_chunk(batch, intensity, saturation_mix, device):
@@ -111,43 +123,44 @@ class PostProcessing:
         noise.add_(gray, alpha=1.0 - saturation_mix).mul_(intensity)
         return batch.add(noise).clamp_(0.0, 1.0).mul_(255).byte().cpu()
 
-    def _process_group(self, images, upscale, upscale_method, upscale_by, interpolate,
-                       interpolate_by, grain, grain_intensity, saturation_mix,
-                       rife, model, ensemble, frame_cache, drop_first, pbar, timings):
+    @staticmethod
+    def _upscale_group(images, method, scale, executor, frame_cache, drop_first, pbar=None):
         import nodes
 
-        result = images.detach().cpu()
-        if interpolate and result.shape[0] > 1:
-            started = time.perf_counter()
-            result = self._interpolate_group(
-                result, interpolate_by, rife, model, ensemble, frame_cache, pbar)
-            timings["RIFE"] += time.perf_counter() - started
-        if drop_first:
-            result = result[1:]
-        if upscale:
-            started = time.perf_counter()
-            output = None
-            for start in range(0, result.shape[0], self._UPSCALE_BATCH_SIZE):
-                chunk = nodes.ImageScaleBy().upscale(
-                    result[start:start + self._UPSCALE_BATCH_SIZE], upscale_method, upscale_by)[0]
+        def upscale_frame(index):
+            return nodes.ImageScaleBy().upscale(images[index:index + 1], method, scale)[0]
+
+        output = None
+        workers = min(PostProcessing._UPSCALE_WORKERS, os.cpu_count() or 1)
+        indices = iter(range(int(drop_first), images.shape[0]))
+        pending = {}
+        for _ in range(min(workers, images.shape[0] - int(drop_first))):
+            index = next(indices)
+            pending[executor.submit(upscale_frame, index)] = index
+        while pending:
+            comfy.model_management.throw_exception_if_processing_interrupted()
+            done, _ = wait(pending, timeout=0.1, return_when=FIRST_COMPLETED)
+            for future in done:
+                index = pending.pop(future)
+                chunk = future.result()
                 if output is None:
-                    output = torch.empty((result.shape[0], *chunk.shape[1:]), dtype=chunk.dtype, device="cpu")
-                output[start:start + chunk.shape[0]].copy_(chunk)
-                pbar.update(1)
-            result = output
-            timings["Upscale"] += time.perf_counter() - started
+                    output = torch.empty((images.shape[0], *chunk.shape[1:]), dtype=chunk.dtype, device="cpu")
+                    if drop_first:
+                        output[:1].copy_(frame_cache[0])
+                output[index:index + 1].copy_(chunk)
+                if pbar is not None:
+                    pbar.update(1)
+                following = next(indices, None)
+                if following is not None:
+                    pending[executor.submit(upscale_frame, following)] = following
+        frame_cache[0] = output[-1:].clone()
+        return output
+
+    def _finish_group(self, images, grain, grain_intensity, saturation_mix):
         if grain:
-            started = time.perf_counter()
             device = comfy.model_management.get_torch_device()
-            output = torch.empty(result.shape, dtype=torch.uint8, device="cpu")
-            for start in range(0, result.shape[0], 4):
-                chunk = self._grain_chunk(
-                    result[start:start + 4], grain_intensity, saturation_mix, device)
-                output[start:start + chunk.shape[0]].copy_(chunk)
-                pbar.update(1)
-            result = output
-            timings["Grain"] += time.perf_counter() - started
-        return result
+            return self._grain_chunk(images, grain_intensity, saturation_mix, device)
+        return images.mul(255).clamp_(0, 255).byte().cpu()
 
     @staticmethod
     def _encode_video(path, frame_rate, batches, cancelled, timings):
@@ -193,7 +206,7 @@ class PostProcessing:
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
-                dual_pass_rife=True):
+                dual_pass_rife=False):
         started = time.perf_counter()
         frame_count = int(images.shape[0])
         if frame_count == 0:
@@ -215,7 +228,7 @@ class PostProcessing:
             source_frames = min(start + group_size, frame_count) - max(0, start - 1)
             processed_frames = (source_frames - 1) * multiplier + 1 - int(start > 0)
             if upscale:
-                progress_total += (processed_frames + self._UPSCALE_BATCH_SIZE - 1) // self._UPSCALE_BATCH_SIZE
+                progress_total += min(group_size, frame_count - start)
             if grain:
                 progress_total += (processed_frames + 3) // 4
         pbar = comfy.utils.ProgressBar(progress_total, node_id=unique_id)
@@ -242,21 +255,79 @@ class PostProcessing:
 
         rife = model = None
         frame_cache = [None]
+        upscale_cache = [None]
+        upscale_executor = None
+        prepare_executor = None
+        prepared = None
+        group_frames = batch = pixels = None
+        rife_events = None
+
+        def prepare_group(start):
+            started = time.perf_counter()
+            source = images[max(0, start - 1):min(start + group_size, frame_count)].detach().cpu()
+            result = self._upscale_group(
+                source, upscale_method, upscale_by, upscale_executor, upscale_cache, start > 0)
+            return result, time.perf_counter() - started
+
         finished = False
         try:
+            if upscale:
+                upscale_executor = ThreadPoolExecutor(
+                    max_workers=min(self._UPSCALE_WORKERS, os.cpu_count() or 1, group_size),
+                    thread_name_prefix="elvax-upscale")
             if do_interpolate:
                 load_started = time.perf_counter()
                 rife, model = self._open_rife(images, batching_mode == "low vram (16)")
                 timings["RIFE"] += time.perf_counter() - load_started
+                if rife.device.type == "cuda":
+                    rife_events = (torch.cuda.Event(enable_timing=True), torch.cuda.Event(enable_timing=True))
+            if upscale and do_interpolate and group_size < frame_count:
+                prepare_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="elvax-prepare")
+                prepared = prepare_executor.submit(prepare_group, 0)
             for chunk_index, start in enumerate(range(0, frame_count, group_size)):
                 end = min(start + group_size, frame_count)
-                result = self._process_group(
-                    images[max(0, start - 1):end], upscale, upscale_method, upscale_by,
-                    do_interpolate, int(interpolate_by), grain, grain_intensity, saturation_mix,
-                    rife, model, use_dual_pass_rife, frame_cache,
-                    chunk_index > 0, pbar, timings)
-                submit_batch(result)
-                del result
+                source = images[max(0, start - 1):end]
+                if upscale:
+                    if prepared is not None:
+                        source, duration = prepared.result()
+                        prepared = None
+                    else:
+                        source, duration = prepare_group(start)
+                    timings["Upscale"] += duration
+                    pbar.update(end - start)
+                    if prepare_executor is not None and end < frame_count:
+                        prepared = prepare_executor.submit(prepare_group, end)
+                if do_interpolate:
+                    group_frames = self._interpolate_group(
+                        source, int(interpolate_by), rife, model, use_dual_pass_rife, frame_cache, pbar,
+                        chunk_index > 0)
+                else:
+                    group_frames = (source[index:index + 4]
+                                    for index in range(int(chunk_index > 0), source.shape[0], 4))
+                while True:
+                    stage_started = time.perf_counter()
+                    if rife_events is not None:
+                        rife_events[0].record(torch.cuda.current_stream(rife.device))
+                    try:
+                        batch = next(group_frames)
+                    except StopIteration:
+                        break
+                    if rife_events is not None:
+                        rife_events[1].record(torch.cuda.current_stream(rife.device))
+                    rife_elapsed = time.perf_counter() - stage_started if do_interpolate else 0.0
+                    pixels = self._finish_group(batch, grain, grain_intensity, saturation_mix)
+                    elapsed = time.perf_counter() - stage_started
+                    if rife_events is not None:
+                        rife_elapsed = max(rife_elapsed, rife_events[0].elapsed_time(rife_events[1]) / 1000)
+                    if do_interpolate:
+                        timings["RIFE"] += min(elapsed, rife_elapsed) if grain else elapsed
+                    if grain:
+                        timings["Grain"] += max(0.0, elapsed - rife_elapsed)
+                        pbar.update(1)
+                    submit_batch(pixels)
+                    batch = pixels = None
+                group_frames = None
+                del source
             submit_batch(None)
             encoder.result()
             pbar.update(1)
@@ -264,6 +335,13 @@ class PostProcessing:
         finally:
             cancelled.set()
             executor.shutdown(wait=True)
+            if prepare_executor is not None:
+                prepare_executor.shutdown(wait=True, cancel_futures=True)
+            prepared = None
+            group_frames = batch = pixels = None
+            if upscale_executor is not None:
+                upscale_executor.shutdown(wait=True, cancel_futures=True)
+            upscale_cache[0] = None
             frame_cache[0] = None
             model = None
             self._close_rife(rife)

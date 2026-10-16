@@ -31,6 +31,8 @@ function hideFixedWidget(node, name, value) {
   widget.hidden = true;
   widget.type = "hidden";
   widget.computeSize = () => [0, -4];
+  const inputIndex = node.inputs?.findIndex((input) => input.name === name) ?? -1;
+  if (inputIndex !== -1) node.removeInput(inputIndex);
 }
 
 function labelAudioInput(node) {
