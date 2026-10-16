@@ -231,7 +231,8 @@ async function refreshQueue() {
     const queue = await response.json();
     const items = [
       ...(queue.queue_running || []).map((tuple) => queueItem(tuple, "Running")),
-      ...(queue.queue_pending || []).map((tuple) => queueItem(tuple, "Queued")),
+      ...(queue.queue_pending || []).slice().sort((a, b) => a[0] - b[0])
+        .map((tuple) => queueItem(tuple, "Queued")),
     ];
     for (const view of nodeViews) {
       if (!view.root.isConnected) continue;
