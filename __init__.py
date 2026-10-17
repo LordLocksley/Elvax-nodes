@@ -15,6 +15,8 @@ from .seed_nodes import ChainSeed, StageSeed
 from .json_prompt_builder import JSONPromptBuilder
 from .json_prompt_splitter import JSONPromptSplitter
 from .video_compare import VideoCompare
+from .reroute_switch import RerouteSwitch
+from .circuit_switch import CircuitSwitch
 
 
 NODE_CLASS_MAPPINGS = {
@@ -35,6 +37,8 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxJSONPromptBuilder": JSONPromptBuilder,
     "ElvaxJSONPromptSplitter": JSONPromptSplitter,
     "ElvaxVideoCompare": VideoCompare,
+    "ElvaxRerouteSwitch": RerouteSwitch,
+    "ElvaxCircuitSwitch": CircuitSwitch,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -55,6 +59,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxJSONPromptBuilder": "JSON Prompt Builder",
     "ElvaxJSONPromptSplitter": "JSON Prompt Splitter",
     "ElvaxVideoCompare": "Video Compare",
+    "ElvaxRerouteSwitch": "Reroute Switch",
+    "ElvaxCircuitSwitch": "Circuit Switch",
 }
 
 WEB_DIRECTORY = "./web"

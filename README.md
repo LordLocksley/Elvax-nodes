@@ -122,6 +122,19 @@ Compare using the hover Slider, Side by Side, or Overlay with a blend slider bet
 All modes share playback controls; the B/A switch selects Before or After audio.
 Captures are saved locally under `input/Elvax/video_compare` and remembered by the workflow.
 
+## Reroute Switch
+
+Connect any value and use the A/B toggle to choose which output receives it.
+The inactive output blocks its branch; its links stay connected and appear gray.
+An inactive route into an optional socket is treated as disconnected during execution.
+Video Compare can load through the active route while keeping both captured videos.
+The selected output is saved with the workflow.
+
+## Circuit Switch
+
+Connect a value through the switch and click the circuit contact to open or close it.
+Closed passes the value by default; open blocks execution while keeping the wire connected.
+
 ## Group toggles
 
 Groups show an always-visible ON/OFF switch to enable or bypass their nodes.

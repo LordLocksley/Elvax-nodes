@@ -4,6 +4,8 @@ import test from "node:test";
 import vm from "node:vm";
 
 const source = readFileSync(new URL("../web/video_compare.js", import.meta.url), "utf8");
+const switchSource = readFileSync(new URL("../web/reroute_switch.js", import.meta.url), "utf8");
+const routing = switchSource.slice(switchSource.indexOf("export const REROUTE_SWITCH"), switchSource.indexOf("function install(")).replaceAll("export ", "");
 const capture = source.slice(source.indexOf("  async function capture(role, button) {"),
   source.indexOf('  for (const role of ["before", "after"])'));
 
@@ -21,7 +23,7 @@ function fixture(input, output, latest = {}) {
     node, inputNode: (_node, role) => input[role] || input, inputKey: (_node, role) => `${role}:saved:0`, state: () => state,
     captureRequests: { before: 0, after: 0 }, disposed: false, message, show() {},
   });
-  vm.runInContext(capture, context);
+  vm.runInContext(routing + capture, context);
   return { context, state, requests, message };
 }
 
@@ -59,6 +61,107 @@ test("Load Video still uses its currently selected file", async () => {
   const f = fixture({ type: "LoadVideo", id: 12, widgets: [{ name: "file", value: "selected.mp4" }] });
   await f.context.capture("before", {});
   assert.deepEqual(f.requests[0].entry, { filename: "selected.mp4", type: "input" });
+});
+
+test("both sockets load the same Save Video file through direct and rerouted connections", async () => {
+  const saved = { filename: "saved.mp4", type: "output" };
+  const save = { type: "SaveVideo", id: 42 };
+  const f = fixture(save, { images: [saved] }, {
+    beforeLatestKey: "101", beforeLatest: { filename: "old-before.mp4", type: "temp" },
+    afterLatestKey: "102", afterLatest: { filename: "old-after.mp4", type: "temp" },
+  });
+  const reroute = { id: 43, type: "Reroute", inputs: [{ link: 103 }] };
+  const rgthree = { id: 44, type: "Reroute (rgthree)", inputs: [{ link: 104 }] };
+  const nodes = [save, reroute, rgthree];
+  f.context.node.inputs = [{ name: "before_video", link: 101 }, { name: "after_video", link: 102 }];
+  f.context.node.graph.links = {
+    101: { origin_id: 42 }, 102: { origin_id: 43 },
+    103: { origin_id: 44 }, 104: { origin_id: 42 },
+  };
+  f.context.node.graph.getNodeById = id => nodes.find(node => node.id === id);
+  for (const node of nodes) node.graph = f.context.node.graph;
+  vm.runInContext(source.slice(source.indexOf("function inputSlot("), source.indexOf("function timeLabel(")), f.context);
+  await f.context.capture("before", {});
+  await f.context.capture("after", {});
+  assert.deepEqual(f.requests.map(request => request.entry), [saved, saved]);
+
+  delete f.context.app.nodeOutputs[42];
+  await f.context.capture("after", {});
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.message.textContent, "No video is available from the connected node yet.");
+
+  reroute.inputs[0].link = 102;
+  assert.equal(f.context.inputNode(f.context.node, "after"), null);
+  reroute.inputs[0].link = null;
+  assert.equal(f.context.inputNode(f.context.node, "after"), null);
+  f.context.node.graph = null;
+  assert.equal(f.context.inputNode(f.context.node, "before"), null);
+});
+
+test("Set/Get routing follows the paired setter in its own graph to the saved file", async () => {
+  const saved = { filename: "saved.mp4", type: "output" };
+  const save = { id: 42, type: "SaveVideo" };
+  const f = fixture(save, { images: [saved] });
+  const set = { id: 43, type: "SetNode", inputs: [{ link: 101 }] };
+  const parent = { links: { 101: { origin_id: 42 } }, getNodeById: id => id === 42 ? save : set };
+  save.graph = set.graph = parent;
+  const get = { id: 44, type: "GetNode", findSetter(graph) {
+    assert.equal(graph, this.graph);
+    return set;
+  } };
+  const reroute = { id: 45, type: "Reroute", inputs: [{ link: 102 }] };
+  f.context.node.inputs = [{ name: "before_video", link: 101 }, { name: "after_video", link: 103 }];
+  f.context.node.graph.links = { 101: { origin_id: 44 }, 102: { origin_id: 44 }, 103: { origin_id: 45 } };
+  f.context.node.graph.getNodeById = id => id === 44 ? get : reroute;
+  get.graph = reroute.graph = f.context.node.graph;
+  vm.runInContext(source.slice(source.indexOf("function inputSlot("), source.indexOf("function timeLabel(")), f.context);
+  await f.context.capture("before", {});
+  await f.context.capture("after", {});
+  assert.deepEqual(f.requests.map(request => request.entry), [saved, saved]);
+
+  // Set outputs also pass through directly, without a Get node.
+  f.context.node.graph = parent;
+  parent.links[103] = { origin_id: 43 };
+  await f.context.capture("after", {});
+  assert.deepEqual(f.requests[2].entry, saved);
+
+  f.context.node.graph = get.graph;
+  get.findSetter = () => undefined;
+  assert.equal(f.context.inputNode(f.context.node, "before"), null);
+  get.findSetter = () => get;
+  assert.equal(f.context.inputNode(f.context.node, "before"), null);
+});
+
+test("Save Video selects the newest file when its output contains multiple results", async () => {
+  const saved = { filename: "new.mp4", type: "output" };
+  const f = fixture({ type: "SaveVideo", id: 42 }, { images: [
+    { filename: "old.mp4", type: "output" }, saved,
+  ] });
+  await f.context.capture("before", {});
+  await f.context.capture("after", {});
+  assert.deepEqual(f.requests.map(request => request.entry), [saved, saved]);
+});
+
+test("Video Compare loads only the selected switch output and keeps previously captured clips", async () => {
+  const save = { type: "SaveVideo", id: 42 };
+  const saved = { filename: "saved.mp4", type: "output" };
+  const f = fixture(save, { images: [saved] });
+  const route = { id: 43, type: "ElvaxRerouteSwitch", inputs: [{ link: 100 }], widgets: [{ name: "active_output", value: "A" }] };
+  f.context.node.inputs = [{ name: "before_video", link: 101 }, { name: "after_video", link: 102 }];
+  const graph = f.context.node.graph;
+  route.graph = save.graph = graph;
+  graph.links = { 100: { origin_id: 42, origin_slot: 0 }, 101: { origin_id: 43, origin_slot: 0 }, 102: { origin_id: 43, origin_slot: 1 } };
+  graph.getNodeById = id => id === 42 ? save : route;
+  vm.runInContext(source.slice(source.indexOf("function inputSlot("), source.indexOf("function timeLabel(")), f.context);
+  await f.context.capture("before", {});
+  await f.context.capture("after", {});
+  assert.equal(f.requests.length, 1);
+  const before = f.state.before;
+  route.widgets[0].value = "B";
+  await f.context.capture("after", {});
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.state.before, before);
+  assert.ok(f.state.after);
 });
 
 function playbackFixture() {

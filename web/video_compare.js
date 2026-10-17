@@ -1,5 +1,6 @@
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
+import { CIRCUIT_SWITCH, REROUTE_SWITCH, ROUTE_CHANGED, selectedOutput } from "./reroute_switch.js";
 
 const NODE_TYPE = "ElvaxVideoCompare";
 const MIN_HEIGHT = 180;
@@ -22,11 +23,27 @@ function inputSlot(node, role) {
 }
 
 function inputNode(node, role) {
-  const slot = inputSlot(node, role);
-  const graph = node.graph;
-  const linkId = slot >= 0 ? node.inputs[slot]?.link : null;
-  const link = linkId == null ? null : graph?.links?.[linkId];
-  return link ? graph.getNodeById(link.origin_id) : null;
+  let slot = inputSlot(node, role);
+  let source = node;
+  const visited = new Set();
+  while (source && !visited.has(source)) {
+    visited.add(source);
+    if (source.type === "GetNode") {
+      source = source.findSetter(source.graph);
+      slot = 0;
+      continue;
+    }
+    const linkId = source.inputs?.[slot]?.link;
+    const graph = source.graph;
+    const link = linkId == null ? null : graph?.links?.[linkId];
+    source = link ? graph.getNodeById(link.origin_id) : null;
+    if (!source) return null;
+    if (source.type === CIRCUIT_SWITCH && source.widgets?.find((widget) => widget.name === "closed")?.value === false) return null;
+    if (source.type === REROUTE_SWITCH && link.origin_slot !== selectedOutput(source)) return null;
+    if (!["Reroute", "Reroute (rgthree)", "SetNode", "GetNode", REROUTE_SWITCH, CIRCUIT_SWITCH].includes(source.type)) return source;
+    slot = 0;
+  }
+  return null;
 }
 
 function inputKey(node, role) {
@@ -926,7 +943,7 @@ function install(node) {
         else throw new Error("No video is available from the connected node yet.");
       }
       if (source.type === "SaveVideo" || source.comfyClass === "SaveVideo") {
-        entry = app.nodeOutputs?.[source.id]?.images?.find((video) => video.type === "output" && video.filename);
+        entry = app.nodeOutputs?.[source.id]?.images?.findLast((video) => video.type === "output" && video.filename);
         if (!entry) throw new Error("No video is available from the connected node yet.");
       }
       if (!entry) throw new Error(`No video is available from the ${role === "before" ? "Before" : "After"} socket.`);
@@ -936,7 +953,7 @@ function install(node) {
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Could not prepare the selected video.");
-      if (disposed || request !== captureRequests[role] || key !== inputKey(node, role)) return;
+      if (disposed || request !== captureRequests[role] || key !== inputKey(node, role) || source !== inputNode(node, role)) return;
       state()[role] = result;
       state().time = 0;
       show();
@@ -945,7 +962,7 @@ function install(node) {
     finally {
       if (!disposed && request === captureRequests[role]) {
         button.__elvaxLoading = false;
-        button.disabled = !inputKey(node, role);
+        button.disabled = !inputNode(node, role);
       }
     }
   }
@@ -962,10 +979,12 @@ function install(node) {
   function updateLoadButtons() {
     for (const [role, button] of captureButtons) {
       const input = node.inputs?.[inputSlot(node, role)];
+      const available = Boolean(inputNode(node, role));
       button.title = input?.link == null
         ? `Connect a video output to the ${role}_video socket.`
+        : !available ? "The connected route is inactive or has no video source."
         : `Load a video from the ${role}_video socket.`;
-      button.disabled = Boolean(button.__elvaxLoading) || input?.link == null;
+      button.disabled = Boolean(button.__elvaxLoading) || !available;
     }
   }
   const oldConnectionsChanged = node.onConnectionsChange;
@@ -983,6 +1002,7 @@ function install(node) {
     return result;
   };
   updateLoadButtons();
+  api.addEventListener(ROUTE_CHANGED, updateLoadButtons);
   root.addEventListener("wheel", (event) => {
     event.preventDefault();
     app.canvas._mousewheel_callback(event);
@@ -1091,6 +1111,7 @@ function install(node) {
   const oldRemoved = node.onRemoved;
   node.onRemoved = function () {
     disposed = true;
+    api.removeEventListener(ROUTE_CHANGED, updateLoadButtons);
     sizeObserver.disconnect();
     pause();
     clearQueuedFrames();
