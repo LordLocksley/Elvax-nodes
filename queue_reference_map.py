@@ -9,7 +9,7 @@ class QueueReferenceMap:
     FUNCTION = "refresh"
     OUTPUT_NODE = True
     CATEGORY = "Elvax Nodes/Utilities"
-    DESCRIPTION = "Show queued prompts with their first reference image and cancel individual jobs."
+    DESCRIPTION = "View, cancel, pause, and resume queued prompts. Paused prompt snapshots persist across restarts."
 
     def refresh(self):
         return ()
