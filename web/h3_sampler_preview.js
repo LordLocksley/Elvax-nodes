@@ -88,6 +88,9 @@ function makeToolbarIcon(paths) {
 function installPreview(node) {
   if (installedNodes.has(node)) return;
   installedNodes.add(node);
+  node.hideOutputImages = true;
+  // The custom player owns the graph preview; App Mode reads the native UI output.
+  node.onDrawBackground = null;
   let disposed = false;
 
   const root = document.createElement("div");

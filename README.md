@@ -88,6 +88,8 @@ independently (supports custom Loras for each stage)
 during sampling or decode a full video preview, and pass the accumulated latent
 to the next stage. The `preview_result` toggle controls full video decoding;
 live previews are available when a tiny VAE is selected.
+With `preview_result` enabled, select this node as an output in App Builder to
+play its finished video in App Mode. Live tiny-VAE previews use the graph player.
 
 `H3 References`: Bundle picture, video, and audio references with MiniMax H3
 token labels for use in H3 Stage Settings. Audio slots 1–3 pair with their

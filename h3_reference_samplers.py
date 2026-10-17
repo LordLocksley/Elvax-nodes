@@ -630,6 +630,7 @@ class H3SamplerPreview(io.ComfyNode):
             ],
             outputs=[io.Latent.Output("chain_latent")],
             hidden=[io.Hidden.unique_id],
+            is_output_node=True,
         )
 
     @classmethod
@@ -672,4 +673,4 @@ class H3SamplerPreview(io.ComfyNode):
             frame_rate=Fraction(H3_FPS),
         ))
         preview = save_video_preview(video).as_dict()
-        return io.NodeOutput(chain_latent, ui={"elvax_h3_video": preview["images"]})
+        return io.NodeOutput(chain_latent, ui={**preview, "elvax_h3_video": preview["images"]})
