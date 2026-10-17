@@ -5,6 +5,99 @@ export const REROUTE_SWITCH = "ElvaxRerouteSwitch";
 export const CIRCUIT_SWITCH = "ElvaxCircuitSwitch";
 export const ROUTE_CHANGED = "elvax.reroute_switch.changed";
 
+let switchLayoutInstalled = false;
+
+export function ensureSwitchLayout() {
+  if (switchLayoutInstalled) return;
+  switchLayoutInstalled = true;
+  const route = `.lg-node:has([node-type="${REROUTE_SWITCH}"])`;
+  const circuit = `.lg-node:has([node-type="${CIRCUIT_SWITCH}"])`;
+  const both = `:is(${route}, ${circuit})`;
+  const style = document.createElement("style");
+  style.textContent = `
+    ${both} { min-width: 0 !important; min-height: 0 !important; --min-node-width: 0px !important; }
+    [data-elvax-switch-toolbar] { transform: translate(-50%, -100%) !important; transition: opacity .12s ease !important; animation: none !important; }
+    ${route} { width: 42px !important; height: 52px !important; }
+    ${circuit} { width: 72px !important; height: 40px !important; }
+    ${both} [data-testid="node-inner-wrapper"] { width: 100% !important; min-width: 0 !important; height: 100%; border-radius: ${LiteGraph.ROUND_RADIUS}px; }
+    ${both} [data-testid^="node-body-"] { position: relative; height: 100%; padding: 0 !important; gap: 0 !important; border-radius: inherit; background: inherit; }
+    ${both} [data-testid^="node-body-"] > .mt-auto { display: none !important; }
+    ${both} [data-testid^="node-body-"] > .flex.justify-between { position: absolute; inset: 0; pointer-events: none; }
+    ${both} .lg-slot { position: absolute; height: 0; padding: 0 !important; pointer-events: auto; z-index: 2; }
+    ${both} .lg-slot--input { left: 0; }
+    ${both} .lg-slot--output { right: 0; }
+    ${route} .lg-slot--input { top: 26px; }
+    ${route} .lg-slot--output { top: 16px; }
+    ${route} .lg-slot--output + .lg-slot--output { top: 36px; }
+    ${circuit} .lg-slot { top: 20px; }
+    ${both} .lg-node-widgets { position: absolute; inset: 0; display: block !important; padding: 0 !important; pointer-events: none; }
+    ${both} .lg-node-widget { display: block !important; height: 100%; }
+    ${both} .lg-node-widget > :first-child { display: none !important; }
+    ${both} [node-type] { display: block !important; width: 100%; height: 100%; pointer-events: none; }
+    ${route} [node-type] button { pointer-events: auto; }
+    ${circuit} [node-type] button::after { content: ""; position: absolute; inset: 4px 18px; pointer-events: auto; }
+    ${circuit} [data-elvax-circuit] { display: block !important; }
+    ${circuit}:has([data-elvax-closed="true"]) [data-slot-key] { background: #46d994 !important; }
+    ${circuit}:has([data-elvax-closed="false"]) [data-slot-key] { background: #777b80 !important; }
+    ${route}:has([data-elvax-route="A"]) .lg-slot--output + .lg-slot--output [data-slot-key],
+    ${route}:has([data-elvax-route="B"]) .lg-slot--output:first-child [data-slot-key] { background: #4c4e52 !important; }
+  `;
+  document.head.append(style);
+  keepSwitchToolbarAbove();
+}
+
+function keepSwitchToolbarAbove() {
+  let toolbar = null;
+  let observedParent = null;
+  let observedNode = null;
+  const positionObserver = new MutationObserver(update);
+  const nodeObserver = new MutationObserver(update);
+  function update() {
+    const current = document.querySelector('[data-testid="selection-toolbox"]');
+    if (current !== toolbar) {
+      toolbar?.style.removeProperty("translate");
+      toolbar?.removeAttribute("data-elvax-switch-toolbar");
+      toolbar = current;
+    }
+    const parent = toolbar?.parentElement;
+    if (parent !== observedParent) {
+      positionObserver.disconnect();
+      if (parent) positionObserver.observe(parent, { attributes: true, attributeFilter: ["style"] });
+      observedParent = parent;
+    }
+    if (!toolbar) {
+      nodeObserver.disconnect();
+      observedNode = null;
+      return;
+    }
+    const selected = Object.values(app.canvas?.selected_nodes || {});
+    const node = LiteGraph.vueNodesMode && selected.length === 1 &&
+      [REROUTE_SWITCH, CIRCUIT_SWITCH].includes(selected[0]?.comfyClass)
+      ? document.querySelector(`.lg-node[data-node-id="${selected[0].id}"]`) : null;
+    if (node !== observedNode) {
+      nodeObserver.disconnect();
+      if (node) {
+        nodeObserver.observe(node, { attributes: true, attributeFilter: ["style"] });
+        nodeObserver.observe(node.parentElement, { attributes: true, attributeFilter: ["style"] });
+      }
+      observedNode = node;
+    }
+    if (!node) {
+      toolbar.style.removeProperty("translate");
+      toolbar.removeAttribute("data-elvax-switch-toolbar");
+      return;
+    }
+    toolbar.toggleAttribute("data-elvax-switch-toolbar", true);
+    const outline = node.querySelector('[data-testid="node-state-outline-overlay"]') || node;
+    const offset = outline.getBoundingClientRect().top - 8 - parent.getBoundingClientRect().top;
+    const translate = `0 ${offset}px`;
+    if (toolbar.style.translate !== translate) toolbar.style.translate = translate;
+  }
+  const selectionObserver = new MutationObserver(update);
+  selectionObserver.observe(document.querySelector(".graph-canvas-container"), { childList: true, subtree: true });
+  update();
+}
+
 export function selectedOutput(node) {
   return node.widgets?.find((widget) => widget.name === "active_output")?.value === "B" ? 1 : 0;
 }
@@ -28,6 +121,7 @@ export function isActiveRoute(prompt, link) {
 }
 
 function install(node) {
+  ensureSwitchLayout();
   node.hideSlotLabels = true;
   node.drawBadges = () => {};
   node.resizable = false;
@@ -63,6 +157,7 @@ function install(node) {
   root.append(control);
   function refresh() {
     const active = value === "B" ? 1 : 0;
+    root.setAttribute("data-elvax-route", value);
     control.setAttribute("aria-checked", String(active === 1));
     control.title = `${active ? "Lower" : "Upper"} output is active. Click to switch outputs.`;
     indicator.style.transform = active ? "translateY(18px)" : "translateY(0)";

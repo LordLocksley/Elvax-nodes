@@ -1,8 +1,11 @@
 import { app } from "/scripts/app.js";
 import { api } from "/scripts/api.js";
-import { CIRCUIT_SWITCH, ROUTE_CHANGED } from "./reroute_switch.js";
+import { CIRCUIT_SWITCH, ROUTE_CHANGED, ensureSwitchLayout } from "./reroute_switch.js";
+
+const SVG_NS = "http://www.w3.org/2000/svg";
 
 function install(node) {
+  ensureSwitchLayout();
   node.drawBadges = () => {};
   node.resizable = false;
   node.widgets_start_y = 0;
@@ -26,12 +29,32 @@ function install(node) {
   const control = document.createElement("button");
   control.type = "button";
   control.setAttribute("role", "switch");
-  control.style.cssText = "display:block;width:100%;height:100%;padding:0;border:0;background:transparent;cursor:pointer;";
+  control.style.cssText = "position:relative;display:block;width:100%;height:100%;padding:0;border:0;background:transparent;cursor:pointer;";
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("aria-hidden", "true");
+  svg.setAttribute("data-elvax-circuit", "");
+  svg.style.cssText = "display:none;position:absolute;inset:0;width:100%;height:100%;pointer-events:none;";
+  const leftPath = document.createElementNS(SVG_NS, "path");
+  const contactPath = document.createElementNS(SVG_NS, "path");
+  const rightPath = document.createElementNS(SVG_NS, "path");
+  const contacts = [0, 1].map(() => document.createElementNS(SVG_NS, "circle"));
+  for (const shape of [leftPath, contactPath, rightPath, ...contacts]) {
+    shape.setAttribute("stroke-linecap", "round");
+    shape.setAttribute("stroke-linejoin", "round");
+    shape.setAttribute("stroke-width", "2.5");
+    shape.setAttribute("vector-effect", "non-scaling-stroke");
+    svg.append(shape);
+  }
+  for (const contact of contacts) {
+    contact.setAttribute("r", "3.25");
+  }
+  control.append(svg);
   root.append(control);
 
   const oldDrawForeground = node.onDrawForeground;
   node.onDrawForeground = function (ctx) {
     oldDrawForeground?.apply(this, arguments);
+    if (LiteGraph.vueNodesMode) return;
     const input = this.inputs[0].pos;
     const output = this.outputs[0].pos;
     const leftContact = this.size[0] / 3;
@@ -65,10 +88,28 @@ function install(node) {
   };
 
   function refresh() {
+    root.setAttribute("data-elvax-closed", String(closed));
     control.setAttribute("aria-label", closed ? "Circuit closed: click to block the feed" : "Circuit open: click to pass the feed");
     control.setAttribute("aria-checked", String(closed));
     control.title = closed ? "Circuit closed. Click to block the feed." : "Circuit open. Click to pass the feed.";
     const stateColor = closed ? "#46d994" : "#777b80";
+    const width = Math.max(node.size[0], 1);
+    const leftContact = width / 3;
+    const rightContact = width * 2 / 3;
+    svg.setAttribute("viewBox", `0 0 ${width} 40`);
+    leftPath.setAttribute("d", `M0 20 H${leftContact}`);
+    contactPath.setAttribute("d", closed ? `M${leftContact} 20 H${rightContact}` : `M${leftContact} 20 L${rightContact} 8`);
+    rightPath.setAttribute("d", `M${rightContact} 20 H${width}`);
+    for (const [index, contact] of contacts.entries()) {
+      contact.setAttribute("cx", String(index === 0 ? leftContact : rightContact));
+      contact.setAttribute("cy", "20");
+      contact.setAttribute("stroke", stateColor);
+      contact.setAttribute("fill", closed ? "#18372a" : "#292b2e");
+    }
+    for (const path of [leftPath, contactPath, rightPath]) {
+      path.setAttribute("stroke", stateColor);
+      path.setAttribute("fill", "none");
+    }
     node.inputs[0].color_on = node.inputs[0].color_off = stateColor;
     node.outputs[0].color_on = node.outputs[0].color_off = stateColor;
     node.graph?.setDirtyCanvas(true, true);
@@ -92,6 +133,12 @@ function install(node) {
   node.onConfigure = function () {
     const result = oldConfigure?.apply(this, arguments);
     layout();
+    refresh();
+    return result;
+  };
+  const oldResize = node.onResize;
+  node.onResize = function () {
+    const result = oldResize?.apply(this, arguments);
     refresh();
     return result;
   };

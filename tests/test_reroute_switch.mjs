@@ -8,14 +8,17 @@ const routing = source.slice(source.indexOf("export const REROUTE_SWITCH"), sour
 
 test("compact switch hides labels and restores its small layout without changing routing keys", async () => {
   const app = { registerExtension(extension) { this.extension = extension; } };
-  const document = { createElement() {
-    return { style: {}, children: [], attributes: {}, listeners: {},
+  const badgeStyles = [];
+  const document = { head: { append(style) { badgeStyles.push(style); } }, querySelector() { return null; }, createElement() {
+    return { style: {}, children: [], attributes: {}, listeners: {}, textContent: "",
       append(child) { this.children.push(child); },
       setAttribute(key, value) { this.attributes[key] = value; },
       addEventListener(key, callback) { this.listeners[key] = callback; },
     };
   } };
-  const context = vm.createContext({ app, document, api: { dispatchEvent() {} }, CustomEvent: class {}, LiteGraph: { NO_TITLE: 1, ROUND_RADIUS: 8 } });
+  const context = vm.createContext({ app, document, api: { dispatchEvent() {} }, CustomEvent: class {}, LiteGraph: { NO_TITLE: 1, ROUND_RADIUS: 8 },
+    MutationObserver: class { observe() {} disconnect() {} },
+  });
   vm.runInContext(source.replace(/^import .*;\r?\n/gm, "").replaceAll("export ", ""), context);
   class Node {
     widgets = [{ name: "active_output", value: "A" }];
@@ -31,6 +34,7 @@ test("compact switch hides labels and restores its small layout without changing
   }
   await app.extension.beforeRegisterNodeDef(Node, { name: "ElvaxRerouteSwitch" });
   const node = new Node();
+  node.id = 99;
   node.onNodeCreated();
   assert.equal(Node.title_mode, 1);
   assert.equal(node.hideSlotLabels, true);
@@ -52,6 +56,10 @@ test("compact switch hides labels and restores its small layout without changing
   assert.match(control.children[0].style.cssText, /border-radius:4px/);
   assert.equal(control.children[0].style.transform, "translateY(0)");
   assert.equal(node.outputs[1].color_on, "#4c4e52");
+  assert.equal(badgeStyles.length, 1);
+  assert.match(badgeStyles[0].textContent, /\.lg-node:has\(\[node-type="ElvaxRerouteSwitch"\]\)/);
+  assert.match(badgeStyles[0].textContent, /\.lg-node:has\(\[node-type="ElvaxCircuitSwitch"\]\)/);
+  assert.doesNotMatch(badgeStyles[0].textContent, /data-node-id=/);
   control.listeners.click({ stopPropagation() {} });
   assert.equal(node.widgets[0].value, "B");
   assert.equal(control.attributes["aria-checked"], "true");
@@ -68,6 +76,9 @@ test("compact switch hides labels and restores its small layout without changing
   assert.equal(node.outputs[0].label.trim(), "");
   assert.deepEqual(Array.from(node.size), [42, 52]);
   assert.deepEqual(Array.from(node.outputs[1].pos), [42, 36]);
+  const second = new Node();
+  second.onNodeCreated();
+  assert.equal(badgeStyles.length, 1);
 });
 
 test("routing honors selection through chained switches and detects blocked upstream routes", () => {
