@@ -1,4 +1,6 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
+tests/
+.playwright-cli/
 llm_turbo/vendor/
