@@ -10,6 +10,8 @@ sys.path.insert(0, str(PACK_ROOT))
 import torch
 import nodes
 from load_crop_image import LoadCropImage
+from comfy.utils import lanczos
+from comfy_extras.nodes_post_processing import ImageScaleToTotalPixels
 
 
 class LoadCropImageTests(unittest.TestCase):
@@ -97,6 +99,35 @@ class LoadCropImageTests(unittest.TestCase):
     def test_rotation_changes_the_cache_fingerprint(self):
         with patch.object(nodes.LoadImage, "IS_CHANGED", return_value="same image"):
             self.assertNotEqual(LoadCropImage.IS_CHANGED("test.png"), LoadCropImage.IS_CHANGED("test.png", rotation=90))
+
+    def test_scaling_matches_native_lanczos_after_rotation_and_cropping(self):
+        self.images /= self.images.max()
+        image, mask = self.crop(self.alpha, rotation=90, crop_x=10, crop_y=20,
+                                crop_width=30, crop_height=40, scale_image=True, megapixels=0.02)
+        rotated = torch.rot90(self.images, -1, dims=(1, 2))[:, 20:60, 10:40]
+        alpha = torch.rot90(self.alpha, -1, dims=(-2, -1))[:, 20:60, 10:40]
+        expected = ImageScaleToTotalPixels.execute(rotated, "lanczos", 0.02, 1).result[0]
+        self.assertTrue(torch.equal(image, expected))
+        self.assertTrue(torch.equal(mask, lanczos(alpha, image.shape[2], image.shape[1])))
+        self.assertEqual(tuple(mask.shape), tuple(image.shape[:3]))
+
+    def test_scaling_opaque_images_keeps_a_matching_empty_mask(self):
+        image, mask = self.crop(torch.zeros(2, 64, 64), scale_image=True, megapixels=0.01)
+        self.assertEqual(tuple(mask.shape), tuple(image.shape[:3]))
+        self.assertEqual(torch.count_nonzero(mask), 0)
+
+    def test_scaling_disabled_preserves_original_pixels_regardless_of_megapixels(self):
+        image, mask = self.crop(self.alpha, scale_image=False, megapixels=0.01)
+        self.assertIs(image, self.images)
+        self.assertIs(mask, self.alpha)
+
+    def test_scale_settings_change_the_cache_fingerprint(self):
+        with patch.object(nodes.LoadImage, "IS_CHANGED", return_value="same image"):
+            original = LoadCropImage.IS_CHANGED("test.png")
+            scaled = LoadCropImage.IS_CHANGED("test.png", scale_image=True)
+            resized = LoadCropImage.IS_CHANGED("test.png", scale_image=True, megapixels=0.5)
+            self.assertNotEqual(original, scaled)
+            self.assertNotEqual(scaled, resized)
 
 
 if __name__ == "__main__":

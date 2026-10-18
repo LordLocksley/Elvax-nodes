@@ -141,3 +141,40 @@ test("four rotations preserve the applied crop and return to its original positi
   }
   assert.deepEqual(plain(crop), original);
 });
+
+test("bottom readout follows scaling and cropping without changing crop coordinates", () => {
+  const { context } = previewContext();
+  Object.assign(context, {
+    source: {}, imageWidth: 1920, imageHeight: 1080,
+    viewRect: { x: 0, y: 0, width: 1920, height: 1080 },
+    scaleWidget: { value: false }, megapixelsWidget: { value: 1.0 },
+    resolution: {}, cropButton: {}, restoreButton: {}, rotateButton: {}, styleButton() {},
+  });
+  const start = source.indexOf("  function updateButtons() {");
+  vm.runInContext(source.slice(start, source.indexOf("  function previewDimensions()", start)), context);
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "1920 × 1080");
+  context.scaleWidget.value = true;
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "1365 × 768");
+  context.megapixelsWidget.value = 0.25;
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "683 × 384");
+  context.viewRect = { x: 100, y: 200, width: 400, height: 400 };
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "512 × 512");
+  assert.deepEqual(plain(context.viewRect), { x: 100, y: 200, width: 400, height: 400 });
+});
+
+test("old positional workflows keep scaling off with a valid boolean", () => {
+  const { context } = previewContext();
+  Object.assign(context, {
+    scaleWidget: { value: "" }, megapixelsWidget: { disabled: false },
+    updateButtons() {}, node: { graph: { setDirtyCanvas() {} } },
+  });
+  const start = source.indexOf("  function updateScaleControls() {");
+  vm.runInContext(source.slice(start, source.indexOf("  for (const widget of [scaleWidget", start)), context);
+  context.updateScaleControls();
+  assert.equal(context.scaleWidget.value, false);
+  assert.equal(context.megapixelsWidget.disabled, true);
+});

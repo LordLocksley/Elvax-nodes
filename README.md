@@ -31,6 +31,8 @@ Image and audio inputs require a compatible model and projector (`mmproj`).
 
 Load and crop an image quickly in one node. Refine the crop interactively, send
 the current image and its matching mask downstream, or restore the original.
+Enable `scale_image` to resize the cropped result to the selected megapixels using
+Lanczos. The resolution below the preview shows the output dimensions.
 
 ![Load/Crop Image](assets/load-crop.gif)
 

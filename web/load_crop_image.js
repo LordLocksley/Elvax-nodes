@@ -41,6 +41,15 @@ function normalizedRotation(value) {
   return ((Math.floor((Number(value) || 0) / 90) % 4 + 4) % 4) * 90;
 }
 
+function scaledDimensions(width, height, megapixels) {
+  const scale = Math.sqrt(megapixels * 1024 * 1024 / (width * height));
+  const round = value => {
+    const floor = Math.floor(value);
+    return value - floor === 0.5 ? floor + floor % 2 : Math.round(value);
+  };
+  return { width: round(width * scale), height: round(height * scale) };
+}
+
 function rotateCrop(crop, imageHeight) {
   if (!crop) return null;
   return { x: imageHeight - crop.y - crop.height, y: crop.x, width: crop.height, height: crop.width };
@@ -84,12 +93,16 @@ function viewUrl(value) {
 function installCropUI(node) {
   if (node.__elvaxLoadCropInstalled) return;
   const imageWidget = node.widgets?.find((widget) => widget.name === "image");
+  const uploadWidget = node.widgets?.find((widget) => widget.name === "upload");
   const rotationWidget = node.widgets?.find((widget) => widget.name === "rotation");
+  const scaleWidget = node.widgets?.find((widget) => widget.name === "scale_image");
+  const megapixelsWidget = node.widgets?.find((widget) => widget.name === "megapixels");
   const cropWidgets = Object.fromEntries(
     CROP_WIDGETS.map((name) => [name, node.widgets?.find((widget) => widget.name === name)]),
   );
-  if (!imageWidget || !rotationWidget || CROP_WIDGETS.some((name) => !cropWidgets[name])) return;
+  if (!imageWidget || !uploadWidget || !rotationWidget || !scaleWidget || !megapixelsWidget || CROP_WIDGETS.some((name) => !cropWidgets[name])) return;
   node.__elvaxLoadCropInstalled = true;
+  uploadWidget.visibility.surfaces.vueNode = "shown";
 
   // Keep Comfy's upload control, but let this widget own the image preview.
   Object.defineProperty(node, "imgs", {
@@ -98,17 +111,16 @@ function installCropUI(node) {
     set: () => {},
   });
 
-  for (const widget of [...Object.values(cropWidgets), rotationWidget]) {
+  for (const widget of [imageWidget, ...Object.values(cropWidgets), rotationWidget]) {
     widget.hidden = true;
     widget.type = "hidden";
     widget.computeSize = () => [0, -4];
   }
 
-  function hideRotationInput() {
-    const index = node.inputs.findIndex(input => input.name === "rotation");
-    if (index !== -1) node.removeInput(index);
+  function hideEditorInputs() {
+    while (node.inputs.length) node.removeInput(0);
   }
-  hideRotationInput();
+  hideEditorInputs();
 
   const root = document.createElement("div");
   root.dataset.elvaxLoadCropPreview = "true";
@@ -119,6 +131,7 @@ function installCropUI(node) {
   function makeButton(label) {
     const button = document.createElement("button");
     button.type = "button";
+    button.className = "elvax-crop-action";
     button.textContent = label;
     button.style.cssText = "flex:1;min-width:0;height:24px;padding:2px 8px;border:1px solid #555;border-radius:0;background:#242424;color:#bbb;font:12px sans-serif;line-height:18px;text-align:center;cursor:pointer;";
     button.addEventListener("mouseenter", () => {
@@ -190,8 +203,11 @@ function installCropUI(node) {
       .dom-widget:has(>[data-elvax-load-crop-preview]){pointer-events:none!important}
       .lg-node:has([data-elvax-load-crop-preview]) [data-testid^="node-body-"] > div:has(> .lg-node-content){display:none!important}
       .lg-node [data-elvax-load-crop-preview]{contain:size;width:100%;height:100%;min-height:${MIN_WIDGET_HEIGHT}px;box-sizing:border-box}
-      .lg-node [data-elvax-load-crop-preview] > :first-child{margin:0 6px!important}
+      .lg-node [data-elvax-load-crop-preview] > :first-child{width:100%!important;margin:0!important}
       .lg-node [data-elvax-load-crop-preview] > :last-child{width:100%;margin:0!important}
+      .lg-node [data-elvax-load-crop-preview] .elvax-crop-action{background:var(--button-surface,#242424)!important;border:1px solid var(--border-subtle,#555)!important;border-radius:4px!important;color:var(--base-foreground,#ddd)!important;font-family:inherit!important;font-size:inherit!important;font-weight:500!important;line-height:16px!important}
+      .lg-node [data-elvax-load-crop-preview] .elvax-crop-action:hover:not(:disabled){background:var(--button-hover-surface,#3a3a3a)!important;border-color:var(--border-color,#777)!important;color:var(--base-foreground,#fff)!important}
+      .lg-node [data-elvax-load-crop-preview] .elvax-crop-action:focus-visible{outline:2px solid var(--p-focus-ring-color,var(--base-foreground,#ddd));outline-offset:2px}
     `;
     document.head.append(style);
   }
@@ -236,7 +252,10 @@ function installCropUI(node) {
 
   function updateButtons() {
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
-    const dimensions = selection || view;
+    let dimensions = selection || view;
+    if (scaleWidget.value && dimensions.width > 0 && dimensions.height > 0) {
+      dimensions = scaledDimensions(dimensions.width, dimensions.height, megapixelsWidget.value);
+    }
     resolution.textContent = source && imageWidth && imageHeight
       ? `${Math.max(0, Math.round(dimensions.width))} × ${Math.max(0, Math.round(dimensions.height))}`
       : "";
@@ -826,11 +845,28 @@ function installCropUI(node) {
     return result;
   };
 
+  function updateScaleControls() {
+    // Older positional workflows store the preview's empty value at this index.
+    if (scaleWidget.value === "") scaleWidget.value = false;
+    megapixelsWidget.disabled = !scaleWidget.value;
+    updateButtons();
+    node.graph?.setDirtyCanvas(true, true);
+  }
+  for (const widget of [scaleWidget, megapixelsWidget]) {
+    const originalCallback = widget.callback;
+    widget.callback = function (...args) {
+      const result = originalCallback?.apply(this, args);
+      updateScaleControls();
+      return result;
+    };
+  }
+
   const originalConfigure = node.onConfigure;
   node.onConfigure = function (...args) {
     const result = originalConfigure?.apply(this, args);
     requestAnimationFrame(() => {
-      hideRotationInput();
+      hideEditorInputs();
+      updateScaleControls();
       loadPreview(false);
     });
     return result;
@@ -844,7 +880,7 @@ function installCropUI(node) {
   };
 
   loadPreview(false);
-  updateButtons();
+  updateScaleControls();
   if (domWidget) node.graph?.setDirtyCanvas(true, true);
 }
 
