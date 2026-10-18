@@ -7,6 +7,32 @@ const source = readFileSync(new URL("../web/load_crop_image.js", import.meta.url
   .replace(/^import .*;\r?\n/gm, "");
 const plain = value => JSON.parse(JSON.stringify(value));
 
+test("copy preserves node copying outside the image and copies the image on hover", () => {
+  let hovered = false;
+  let copies = 0;
+  const context = vm.createContext({
+    interaction: { matches: () => hovered },
+    source: {},
+    HTMLElement: class {},
+    copyImage: () => copies++,
+  });
+  const start = source.indexOf("  function onKeyDown(event) {");
+  const end = source.indexOf('\n  window.addEventListener("keydown"', start);
+  vm.runInContext(source.slice(start, end), context);
+  let prevented = 0;
+  let stopped = 0;
+  const event = {
+    key: "c", ctrlKey: true,
+    preventDefault: () => prevented++,
+    stopImmediatePropagation: () => stopped++,
+  };
+  context.onKeyDown(event);
+  assert.deepEqual([copies, prevented, stopped], [0, 0, 0]);
+  hovered = true;
+  context.onKeyDown(event);
+  assert.deepEqual([copies, prevented, stopped], [1, 1, 1]);
+});
+
 function previewContext(crop = null, rotation = 0) {
   const media = [];
   const changes = [];
@@ -154,6 +180,13 @@ test("bottom readout follows scaling and cropping without changing crop coordina
   vm.runInContext(source.slice(start, source.indexOf("  function previewDimensions()", start)), context);
   context.updateButtons();
   assert.equal(context.resolution.textContent, "1920 × 1080");
+  context.selection = { x: 100, y: 100, width: 0, height: 0 };
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "1920 × 1080");
+  context.selection = { x: 100, y: 100, width: 320, height: 180 };
+  context.updateButtons();
+  assert.equal(context.resolution.textContent, "320 × 180");
+  context.selection = null;
   context.scaleWidget.value = true;
   context.updateButtons();
   assert.equal(context.resolution.textContent, "1365 × 768");

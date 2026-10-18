@@ -252,7 +252,7 @@ function installCropUI(node) {
 
   function updateButtons() {
     const view = viewRect || { x: 0, y: 0, width: imageWidth, height: imageHeight };
-    let dimensions = selection || view;
+    let dimensions = selection && selection.width >= 1 && selection.height >= 1 ? selection : view;
     if (scaleWidget.value && dimensions.width > 0 && dimensions.height > 0) {
       dimensions = scaledDimensions(dimensions.width, dimensions.height, megapixelsWidget.value);
     }
@@ -626,7 +626,7 @@ function installCropUI(node) {
       return;
     }
     if (!(event.ctrlKey || event.metaKey) || event.altKey || event.key.toLowerCase() !== "c") return;
-    if (!app.canvas?.selected_nodes?.[node.id] || Object.keys(app.canvas.selected_nodes).length !== 1) return;
+    if (!interaction.matches(":hover")) return;
     if (event.target instanceof HTMLElement && (event.target.isContentEditable || /^(INPUT|TEXTAREA)$/.test(event.target.tagName))) return;
     if (!source) return;
     event.preventDefault();
