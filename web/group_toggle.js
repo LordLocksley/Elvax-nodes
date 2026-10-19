@@ -5,6 +5,8 @@ const HIDDEN_FLAG = "elvaxToggleHidden";
 const WIDTH = 44;
 const HEIGHT = 16;
 const MARGIN = 6;
+const PIN_SIZE = 14;
+const PIN_GAP = 5;
 
 function shown(group) {
   return !group.flags[HIDDEN_FLAG];
@@ -13,6 +15,15 @@ function shown(group) {
 function bounds(group) {
   return [group.pos[0] + group.size[0] - WIDTH - MARGIN,
     group.pos[1] + (group.titleHeight - HEIGHT) / 2, WIDTH, HEIGHT];
+}
+
+function pinBounds(group) {
+  const [x, y] = bounds(group);
+  return [x - PIN_GAP - PIN_SIZE, y + (HEIGHT - PIN_SIZE) / 2, PIN_SIZE, PIN_SIZE];
+}
+
+function pinned(group) {
+  return Boolean(group.pinned ?? group.flags?.pinned);
 }
 
 function contains(rect, x, y) {
@@ -50,7 +61,7 @@ function changeGroup(canvas, change) {
 
 function visibilityItem(canvas, group) {
   return {
-    content: shown(group) ? "Hide Group Bypass Switch" : "Show Group Bypass Switch",
+    content: shown(group) ? "Hide Elvax Group Controls" : "Show Elvax Group Controls",
     callback: () => changeGroup(canvas, () => {
       if (shown(group)) group.flags[HIDDEN_FLAG] = true;
       else delete group.flags[HIDDEN_FLAG];
@@ -72,6 +83,40 @@ function toggleGroup(canvas, group) {
   });
 }
 
+function togglePin(canvas, group) {
+  changeGroup(canvas, () => group.pin(!pinned(group)));
+}
+
+function drawPin(ctx, group, alpha) {
+  const [x, y, width, height] = pinBounds(group);
+  const active = pinned(group);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.translate(x + width / 2, y + height / 2);
+  ctx.strokeStyle = active ? "#f87171" : "#aab4c0";
+  ctx.fillStyle = active ? "#f8717126" : "#aab4c00c";
+  ctx.lineWidth = 1.25;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.beginPath();
+  ctx.moveTo(-3, -5);
+  ctx.lineTo(3, -5);
+  ctx.lineTo(2, -1);
+  ctx.lineTo(4, 1.5);
+  ctx.lineTo(4, 3);
+  ctx.lineTo(-4, 3);
+  ctx.lineTo(-4, 1.5);
+  ctx.lineTo(-2, -1);
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(0, 3);
+  ctx.lineTo(0, 6);
+  ctx.stroke();
+  ctx.restore();
+}
+
 function drawToggle(ctx, group, alpha) {
   const [x, y, width, height] = bounds(group);
   const state = groupState(group);
@@ -79,8 +124,8 @@ function drawToggle(ctx, group, alpha) {
   const mixed = state === "mixed";
   ctx.save();
   ctx.globalAlpha = alpha * (state === "empty" ? .5 : 1);
-  ctx.fillStyle = active ? "#009b67" : mixed ? "#795523" : "#333b46";
-  ctx.strokeStyle = active ? "#2ceba1" : mixed ? "#e7b75a" : "#77818f";
+  ctx.fillStyle = active ? "#183d32" : mixed ? "#40341f" : "#333b46";
+  ctx.strokeStyle = active ? "#51a88a" : mixed ? "#b3955d" : "#77818f";
   ctx.lineWidth = 1;
   ctx.beginPath();
   ctx.roundRect(x, y, width, height, height / 2);
@@ -92,7 +137,7 @@ function drawToggle(ctx, group, alpha) {
     y + height / 2, 5.25, 0, Math.PI * 2);
   ctx.fill();
   if (mixed) {
-    ctx.strokeStyle = "#795523";
+    ctx.strokeStyle = "#40341f";
     ctx.beginPath();
     ctx.moveTo(x + width / 2 - 3, y + height / 2);
     ctx.lineTo(x + width / 2 + 3, y + height / 2);
@@ -141,6 +186,18 @@ app.registerExtension({
       };
     }
 
+    const drawGroup = LGraphGroup.prototype.draw;
+    LGraphGroup.prototype.draw = function (canvas, ctx) {
+      if (!shown(this) || !pinned(this)) return drawGroup.apply(this, arguments);
+      const group = this;
+      const fillText = ctx.fillText;
+      ctx.fillText = function (text, ...args) {
+        return fillText.call(this, text === `${group.title}📌` ? group.title : text, ...args);
+      };
+      try { return drawGroup.apply(this, arguments); }
+      finally { ctx.fillText = fillText; }
+    };
+
     const drawGroups = LGraphCanvas.prototype.drawGroups;
     LGraphCanvas.prototype.drawGroups = function (element, ctx) {
       ctx.save();
@@ -149,7 +206,10 @@ app.registerExtension({
       try { drawGroups.apply(this, arguments); }
       finally { drawing = previous; ctx.restore(); }
       for (const group of this.graph?.groups || []) {
-        if (shown(group)) drawToggle(ctx, group, this.editor_alpha);
+        if (shown(group)) {
+          drawPin(ctx, group, this.editor_alpha);
+          drawToggle(ctx, group, this.editor_alpha);
+        }
       }
     };
 
@@ -160,7 +220,9 @@ app.registerExtension({
       const group = headerAt(canvas, event.canvasX, event.canvasY);
       if (!group) return null;
       const inToggleRegion = contains(bounds(group), event.canvasX, event.canvasY);
-      return { canvas, group, inToggleRegion, overToggle: shown(group) && inToggleRegion };
+      const inPinRegion = contains(pinBounds(group), event.canvasX, event.canvasY);
+      return { canvas, group, inToggleRegion, inPinRegion,
+        overToggle: shown(group) && inToggleRegion, overPin: shown(group) && inPinRegion };
     }
 
     function consume(event) {
@@ -172,13 +234,14 @@ app.registerExtension({
       const target = pointerTarget(event);
       pointerHeader = target?.group || null;
       if (!target || event.button === 1) return;
-      if (!target.overToggle && !(event.button === 2 && target.inToggleRegion)) return;
-      consume(event);
-      if (event.button === 2) {
+      if (event.button === 2 && (target.inToggleRegion || target.inPinRegion)) {
+        consume(event);
         new LiteGraph.ContextMenu([visibilityItem(target.canvas, target.group)], { event });
-      } else if (event.button === 0) {
-        pressed = { ...target, pointerId: event.pointerId };
+        return;
       }
+      if (event.button !== 0 || (!target.overToggle && !target.overPin)) return;
+      consume(event);
+      pressed = { ...target, action: target.overPin ? "pin" : "toggle", pointerId: event.pointerId };
     }, true);
 
     window.addEventListener("pointerup", (event) => {
@@ -188,7 +251,9 @@ app.registerExtension({
       pressed = null;
       const target = pointerTarget(event);
       consume(event);
-      if (target?.group === original.group && target.overToggle) toggleGroup(target.canvas, target.group);
+      if (target?.group !== original.group) return;
+      if (original.action === "pin" && target.overPin) togglePin(target.canvas, target.group);
+      else if (original.action === "toggle" && target.overToggle) toggleGroup(target.canvas, target.group);
     }, true);
 
     window.addEventListener("pointercancel", (event) => {
@@ -198,7 +263,7 @@ app.registerExtension({
     for (const type of ["click", "dblclick", "contextmenu"]) {
       window.addEventListener(type, (event) => {
         const target = pointerTarget(event);
-        if (target?.overToggle || (type === "contextmenu" && target?.inToggleRegion)) consume(event);
+        if (target?.overToggle || target?.overPin || (type === "contextmenu" && (target?.inToggleRegion || target?.inPinRegion))) consume(event);
       }, true);
     }
 
@@ -208,14 +273,18 @@ app.registerExtension({
     app.canvas.canvas.addEventListener("pointermove", (event) => {
       const target = pointerTarget(event);
       const element = app.canvas.canvas;
-      if (target?.overToggle && !event.buttons) {
+      if ((target?.overToggle || target?.overPin) && !event.buttons) {
         if (!hovering) { oldTitle = element.title; oldCursor = element.style.cursor; }
         hovering = true;
         element.style.cursor = "pointer";
-        const state = groupState(target.group);
-        element.title = state === "on" ? "Enabled — click to bypass group" : state === "off"
-          ? "Bypassed — click to enable group" : state === "empty" ? "This group is empty"
-            : "Some nodes are disabled — click to bypass group";
+        if (target.overPin) {
+          element.title = pinned(target.group) ? "Pinned - click to unpin group" : "Click to pin group";
+        } else {
+          const state = groupState(target.group);
+          element.title = state === "on" ? "Enabled - click to bypass group" : state === "off"
+            ? "Bypassed - click to enable group" : state === "empty" ? "This group is empty"
+              : "Some nodes are disabled - click to bypass group";
+        }
       } else if (hovering) {
         hovering = false;
         element.title = oldTitle;

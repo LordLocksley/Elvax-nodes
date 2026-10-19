@@ -1,22 +1,22 @@
-from .h3_extension_sampler import H3ExtensionSampler
-from .h3_reference_samplers import (
+from .nodes.h3_extension_sampler import H3ExtensionSampler
+from .nodes.h3_reference_samplers import (
     H3ChainSettings,
     H3ReferenceInputs,
     H3SamplerPreview,
     H3StageSettings,
 )
-from .load_crop_image import LoadCropImage
-from .prompt_edit_preview import PromptEditPreview
-from .dynamic_pipe import DynamicPipeIn, DynamicPipeOut
+from .nodes.load_crop_image import LoadCropImage
+from .nodes.prompt_edit_preview import PromptEditPreview
+from .nodes.dynamic_pipe import DynamicPipeIn, DynamicPipeOut
 from .llm_turbo.nodes import LLMTurbo
-from .post_processing import PostProcessing
-from .queue_reference_map import QueueReferenceMap
-from .seed_nodes import ChainSeed, StageSeed
-from .json_prompt_builder import JSONPromptBuilder
-from .json_prompt_splitter import JSONPromptSplitter
-from .video_compare import VideoCompare
-from .reroute_switch import RerouteSwitch
-from .circuit_switch import CircuitSwitch
+from .nodes.post_processing import PostProcessing
+from .nodes.generation_queue_manager import GenerationQueueManager
+from .nodes.seed_nodes import ChainSeed, StageSeed
+from .nodes.json_prompt_builder import JSONPromptBuilder
+from .nodes.json_prompt_splitter import JSONPromptSplitter
+from .nodes.video_compare import VideoCompare
+from .nodes.reroute_switch import RerouteSwitch
+from .nodes.circuit_switch import CircuitSwitch
 
 
 NODE_CLASS_MAPPINGS = {
@@ -31,7 +31,7 @@ NODE_CLASS_MAPPINGS = {
     "ElvaxDynamicPipeOut": DynamicPipeOut,
     "ElvaxLLMTurbo": LLMTurbo,
     "ElvaxPostProcessing": PostProcessing,
-    "ElvaxQueueReferenceMap": QueueReferenceMap,
+    "ElvaxGenerationQueueManager": GenerationQueueManager,
     "ElvaxStageSeed": StageSeed,
     "ElvaxChainSeed": ChainSeed,
     "ElvaxJSONPromptBuilder": JSONPromptBuilder,
@@ -53,7 +53,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ElvaxDynamicPipeOut": "Dynamic Pipe Out",
     "ElvaxLLMTurbo": "LLM Turbo",
     "ElvaxPostProcessing": "Turbo Post Processing",
-    "ElvaxQueueReferenceMap": "Queue Reference Map",
+    "ElvaxGenerationQueueManager": "Generation Queue Manager",
     "ElvaxStageSeed": "Stage Seed",
     "ElvaxChainSeed": "Chain Seed",
     "ElvaxJSONPromptBuilder": "JSON Prompt Builder",

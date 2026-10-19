@@ -108,6 +108,18 @@ function installModeLayout(node) {
   for (const eventName of ["pointerdown", "pointermove"]) {
     root.addEventListener(eventName, (event) => event.stopPropagation());
   }
+  root.addEventListener("wheel", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const content = modeWidget.value ? editor : previewContent;
+    if (content.scrollHeight > content.clientHeight) {
+      const step = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? content.clientHeight : 1;
+      content.scrollTop += event.deltaY * step;
+      return;
+    }
+    app.canvas._mousewheel_callback(event);
+  }, { capture: true, passive: false });
   root.addEventListener("pointerenter", () => {
     if (previewActions.style.display !== "none") {
       previewActions.style.opacity = "1";

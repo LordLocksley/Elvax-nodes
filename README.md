@@ -122,7 +122,7 @@ Connect the source videos to the `before_video` and `after_video` sockets, then 
 **Load the Before Video** and **Load the After Video** to store each version.
 Compare using the hover Slider, Side by Side, or Overlay with a blend slider between the Before/After labels.
 All modes share playback controls; the B/A switch selects Before or After audio.
-Captures are saved locally under `input/Elvax/video_compare` and remembered by the workflow.
+Captures use ComfyUI's temp folder. Dropped videos reuse identical files already in ComfyUI's input or output folders when available.
 
 ## Reroute Switch
 

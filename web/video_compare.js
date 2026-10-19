@@ -5,6 +5,8 @@ import { CIRCUIT_SWITCH, REROUTE_SWITCH, ROUTE_CHANGED, selectedOutput } from ".
 const NODE_TYPE = "ElvaxVideoCompare";
 const MIN_HEIGHT = 180;
 const MIN_SIZE = 360;
+const GENERATION_ORDER = ["Steps", "Sampler", "Scheduler", "Model", "LoRA", "Seed",
+  "CFG", "Denoise", "Duration", "Final resolution", "Frame rate"];
 
 export function comparisonDuration(videos) {
   const durations = videos.filter((video) => video.hasAttribute("src"))
@@ -90,6 +92,7 @@ function install(node) {
   let hoveringVideo = false;
   const captureRequests = { before: 0, after: 0 };
   const captureButtons = new Map();
+  const autoCheckboxes = new Map();
 
   const root = document.createElement("div");
   root.className = "elvax-video-compare";
@@ -98,22 +101,75 @@ function install(node) {
   style.textContent = `
     .elvax-video-compare,.elvax-video-compare * {user-select:none;-webkit-user-select:none;}
     .elvax-video-compare .status {user-select:text;-webkit-user-select:text;}
+    .elvax-video-compare .generation-panel,.elvax-video-compare .generation-panel * {user-select:text;-webkit-user-select:text;}
     .elvax-video-compare button,.elvax-video-compare input {outline:none !important;-webkit-tap-highlight-color:transparent;}
     .elvax-video-compare input[type=range]:focus,.elvax-video-compare input[type=range]:focus-visible {outline:none !important;}
     .elvax-video-compare input[type=range]::-moz-focus-outer {border:0;}
     .elvax-video-compare button {box-sizing:border-box;font:12px Arial,sans-serif;color:#eee;cursor:pointer;white-space:nowrap;}
     .elvax-video-compare button:disabled {opacity:.5;cursor:wait;}
     .elvax-video-compare .capture-row {display:flex;}
-    .elvax-video-compare .captions {padding:6px 8px;font-size:11px;line-height:16px;}
+    .elvax-video-compare .captions {--caption-inset:8px;position:relative;z-index:1;width:100%;min-width:0;box-sizing:border-box;display:flex;flex:0 0 auto;align-items:center;gap:8px;padding:6px calc(var(--caption-right,0px) + var(--caption-inset)) 6px calc(var(--caption-left,0px) + var(--caption-inset));font-size:11px;line-height:16px;}
+    .elvax-video-compare .media-row {position:relative;display:grid;flex:1;grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr);min-height:0;min-width:0;overflow:hidden;}
+    .elvax-video-compare .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-panel-width,50%));}
+    .elvax-video-compare .media-row > .captions {grid-area:1 / 1;grid-template-columns:minmax(0,1fr) minmax(0,2fr) minmax(0,1fr);min-height:40px;}
+    .elvax-video-compare .media-row > .stage {grid-area:2 / 1;min-width:0;}
+    .elvax-video-compare .generation-panel {grid-area:1 / 3 / 3 / 4;display:none;flex-direction:column;min-width:0;min-height:0;box-sizing:border-box;overflow:hidden;border:1px solid #ffffff1c;border-radius:0;background:#171b20;color:#c7cdd3;font-size:11px;line-height:1.5;container-type:inline-size;}
+    .elvax-video-compare .generation-resizer {grid-area:1 / 2 / 3 / 3;display:none;position:relative;cursor:col-resize;touch-action:none;}
+    .elvax-video-compare .generation-open .generation-resizer {display:block;}
+    .elvax-video-compare .generation-resizer::after {content:"";position:absolute;inset:0 2px;background:#ffffff14;transition:background .15s;}
+    .elvax-video-compare .generation-resizer:hover::after,.elvax-video-compare .generation-resizer:focus-visible::after {background:#8bd4ff80;}
+    .elvax-video-compare .generation-header {display:flex;flex:0 0 auto;align-items:center;gap:6px;min-height:40px;padding:4px 6px;box-sizing:border-box;border-bottom:1px solid #ffffff0d;}
+    .elvax-video-compare .generation-header .generation-heading {flex:1;min-width:0;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+    .elvax-video-compare .generation-heading {color:#dce7ef;font-size:11px;font-weight:600;}
+    .elvax-video-compare .generation-toggle {position:relative;display:inline-flex;flex:0 0 24px;align-items:center;justify-content:center;width:24px;height:24px;padding:4px;border:1px solid #ffffff18;border-radius:5px;background:#17232c;color:#8bd4ff;}
+    .elvax-video-compare .generation-toggle:hover {background:#ffffff0c;border-color:#ffffff14;color:#fff;}
+    .elvax-video-compare .generation-toggle[aria-expanded=true] {border-color:#ffffff20;border-radius:2px;background:#202b34;color:#b9e3ff;}
+    .elvax-video-compare .generation-icon {width:15px;height:15px;flex:0 0 15px;transform:scaleX(-1);}
+    .elvax-video-compare .generation-toggle[aria-expanded=true] .generation-icon {transform:none;}
+    .elvax-video-compare .generation-count {margin-left:auto;padding:2px 6px;border-radius:4px;background:#8bd4ff12;color:#a9cce3;font-size:9px;white-space:nowrap;}
+    .elvax-video-compare .generation-count:empty {display:none;}
+    @container (max-width: 240px) {.generation-count {display:none;}}
+    .elvax-video-compare .generation-content {display:block;flex:1;min-height:0;overflow:auto;padding:12px;scrollbar-width:thin;scrollbar-color:#ffffff26 transparent;}
+    .elvax-video-compare .generation-comparison {position:relative;margin-top:12px;overflow:hidden;border:1px solid #ffffff12;border-radius:8px;background:#13181d;}
+    .elvax-video-compare .generation-comparison.has-rows.before-active {background-image:linear-gradient(to right,#39b98116 0 50%,transparent 50% 100%);}
+    .elvax-video-compare .generation-comparison.has-rows.after-active {background-image:linear-gradient(to right,transparent 0 50%,#39b98116 50% 100%);}
+    .elvax-video-compare .generation-comparison.has-rows::before {content:"";position:absolute;top:0;bottom:0;left:50%;width:1px;background:#ffffff24;pointer-events:none;}
+    .elvax-video-compare .generation-comparison.before-active .generation-columns > :first-child,.elvax-video-compare .generation-comparison.before-active .generation-value:first-child,.elvax-video-compare .generation-comparison.after-active .generation-columns > :last-child,.elvax-video-compare .generation-comparison.after-active .generation-value:last-child {color:#91dbb6;}
+    .elvax-video-compare .generation-columns,.elvax-video-compare .generation-values {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));}
+    .elvax-video-compare .generation-columns {min-height:32px;padding:7px 0;box-sizing:border-box;background:#ffffff04;color:#c1ccd5;font-size:11px;letter-spacing:.01em;border-bottom:1px solid #ffffff18;}
+    .elvax-video-compare .generation-columns .generation-heading {display:flex;align-items:center;font-size:inherit;font-weight:600;color:inherit;line-height:1.2;}
+    .elvax-video-compare .generation-columns .generation-heading:first-child,.elvax-video-compare .generation-value:first-child {padding-left:6px;padding-right:8px;}
+    .elvax-video-compare .generation-columns .generation-heading:last-child,.elvax-video-compare .generation-value:last-child {padding-left:8px;padding-right:6px;}
+    .elvax-video-compare .generation-table {display:flex;flex-direction:column;}
+    .elvax-video-compare .generation-row {min-width:0;padding:7px 0 8px;border-bottom:1px solid #ffffff14;}
+    .elvax-video-compare .generation-name {width:50%;box-sizing:border-box;margin:0 0 3px;padding:0 8px 0 6px;color:#8d9aa7;font-size:10px;overflow-wrap:anywhere;}
+    .elvax-video-compare .generation-value {min-width:0;overflow-wrap:anywhere;}
+    .elvax-video-compare .generation-strength {color:#f2cf62;}
+    .elvax-video-compare .generation-row.is-different .generation-value:last-child {color:#b9dcf3;}
+    .elvax-video-compare .generation-empty {padding:12px;border:1px solid #ffffff0c;border-radius:5px;background:#ffffff03;color:#9aa6b1;}
+    .elvax-video-compare .generation-controls {display:flex;align-items:center;margin-bottom:12px;color:#9da8b3;font-size:10px;}
+    .elvax-video-compare .generation-controls label {display:flex;align-items:center;gap:6px;cursor:pointer;}
+    .elvax-video-compare .generation-controls input {appearance:none;position:relative;flex:0 0 13px;width:13px;height:13px;margin:0;border:1px solid #65717b;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-video-compare .generation-controls input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-video-compare .generation-controls input:checked::after {content:"";position:absolute;left:4px;top:1px;width:3px;height:6px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-video-compare .generation-controls input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
     .elvax-video-compare .caption-label {color:#bbb;transition:color .16s ease,text-shadow .16s ease;}
+    .elvax-video-compare .caption-label {flex:0 0 auto;white-space:nowrap;}
+    .elvax-video-compare .caption-after {grid-area:1 / 3;display:flex;align-items:center;justify-content:flex-end;gap:6px;}
     .elvax-video-compare .caption-label.is-active {color:#00ff78;text-shadow:0 0 8px #00ff7866;}
     .elvax-video-compare .caption-label.audio-source-hover {text-decoration:underline;text-decoration-color:#8bd4ffcc;text-decoration-thickness:1px;text-underline-offset:2px;}
-    .elvax-video-compare .capture {flex:1 1 0;min-width:0;min-height:28px;padding:5px 6px;line-height:16px;border:1px solid #666;border-radius:4px;background:#333;}
-    .elvax-video-compare .capture:hover {background:#444;}
-    .elvax-video-compare .capture:disabled {cursor:default;background:#333;}
+    .elvax-video-compare .capture-control {display:flex;align-items:center;flex:1 1 0;min-width:0;overflow:hidden;border:1px solid #666;border-radius:4px;background:#333;}
+    .elvax-video-compare .capture {flex:1 1 0;min-width:0;min-height:26px;padding:5px 6px;line-height:16px;border:0;background:transparent;}
+    .elvax-video-compare .capture-auto {display:flex;flex:0 0 auto;align-items:center;gap:4px;padding:0 6px;cursor:pointer;color:#c1cbd3;font-size:10px;}
+    .elvax-video-compare .capture-auto input {appearance:none;position:relative;width:11px;height:11px;margin:0;border:1px solid #86939f;border-radius:3px;background:#ffffff05;cursor:pointer;}
+    .elvax-video-compare .capture-auto input:checked {border-color:#8bd4ff;background:#8bd4ff;}
+    .elvax-video-compare .capture-auto input:checked::after {content:"";position:absolute;left:3px;top:1px;width:3px;height:5px;border:solid #17232c;border-width:0 1.5px 1.5px 0;transform:rotate(45deg);}
+    .elvax-video-compare .capture-auto input:focus-visible {box-shadow:0 0 0 2px #8bd4ff40;}
+    .elvax-video-compare .capture-control:has(.capture:not(:disabled)):hover {background:#444;}
+    .elvax-video-compare .capture:disabled {cursor:default;}
     .elvax-video-compare .mode-row {display:grid;grid-template-columns:repeat(3,minmax(0,1fr));flex:0 0 auto;gap:4px;padding:2px 8px;box-sizing:border-box;border-bottom:1px solid #ffffff12;}
     .elvax-video-compare .mode-cell {position:relative;min-width:0;}
-    .elvax-video-compare .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:20px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
+    .elvax-video-compare .mode-button {display:flex;align-items:center;justify-content:center;width:100%;height:24px;padding:1px 8px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:10px;line-height:16px;color:#929eaa;transition:background .15s,color .15s,border-color .15s;}
     .elvax-video-compare .mode-button.before-after-control {gap:4px;padding-left:2px;padding-right:2px;}
     .elvax-video-compare .before-after-option {font-size:inherit;color:#929eaa;transition:color .15s;}
     .elvax-video-compare .before-after-option.is-current {color:#d6ecff;}
@@ -141,18 +197,38 @@ function install(node) {
     .elvax-video-compare .volume {flex:0 1 42px;width:42px;min-width:14px;}
     .elvax-video-compare input[type=range] {appearance:none;height:3px;margin:0;background:#888;cursor:pointer;min-width:0;}
     .elvax-video-compare input[type=range]::-webkit-slider-thumb {appearance:none;width:9px;height:9px;background:white;border-radius:50%;}
-    .elvax-video-compare .blend {flex:1;width:0;min-width:36px;height:16px;background:linear-gradient(#73879a,#73879a) center / 100% 3px no-repeat;}
-    .elvax-video-compare .blend:disabled {opacity:.35;cursor:default;}
-    .elvax-video-compare .blend-value {display:flex;align-items:center;justify-content:center;flex:0 0 9em;width:9em;height:2em;min-width:0;box-sizing:border-box;padding:0 .6em;border:1px solid #ffffff12;border-radius:.45em;background:#ffffff06;color:#bcd3e5;font-size:8px;line-height:1;font-variant-numeric:tabular-nums;text-align:center;white-space:nowrap;}
+    .elvax-video-compare .blend-control {grid-area:1 / 2;position:relative;justify-self:center;width:100%;max-width:200px;min-width:0;height:15px;box-sizing:border-box;}
+    .elvax-video-compare .blend-control::before {content:"";position:absolute;inset:0;border-radius:2px;background:linear-gradient(90deg,#8faabb26 var(--blend-fill,50%),#ffffff04 var(--blend-fill,50%));box-shadow:inset 0 -1px #ffffff18;transition:filter .15s;pointer-events:none;}
+    .elvax-video-compare .blend-control::after {content:"";position:absolute;left:clamp(1px,var(--blend-fill,50%),calc(100% - 1px));top:4px;bottom:4px;width:1px;background:#b7cbd8;opacity:0;pointer-events:none;transition:opacity .15s;}
+    .elvax-video-compare .blend-control:hover::before,.elvax-video-compare .blend-control:focus-within::before {filter:brightness(1.4);}
+    .elvax-video-compare .blend-control:hover::after,.elvax-video-compare .blend-control:focus-within::after {opacity:1;}
+    .elvax-video-compare input.blend[type=range] {position:absolute;inset:0;z-index:1;width:100%;height:100%;min-width:0;margin:0;background:transparent;cursor:ew-resize;touch-action:none;}
+    .elvax-video-compare input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;box-shadow:none;}
+    .elvax-video-compare input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;border:0;background:transparent;}
+    .elvax-video-compare .blend-value {position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;color:#b8c6d0;font-size:9px;line-height:1;font-variant-numeric:tabular-nums;white-space:nowrap;}
     .elvax-video-compare .status:empty {display:none;}
     .elvax-video-compare:fullscreen {background:#111;padding:16px;box-sizing:border-box;--compare-gap:12px;}
     .elvax-video-compare:fullscreen .capture-row {display:none;}
     .elvax-video-compare:fullscreen .mode-row {padding:8px;gap:6px;}
-    .elvax-video-compare:fullscreen .mode-row,.elvax-video-compare:fullscreen .captions {width:min(100%,var(--compare-controls-width,960px));align-self:center;box-sizing:border-box;}
+    .elvax-video-compare:fullscreen .mode-row {width:100%;align-self:stretch;padding:8px max(8px,calc((100% - 960px)/2 + 8px));box-sizing:border-box;}
     .elvax-video-compare:fullscreen .mode-button {height:40px;padding:4px;font-size:clamp(16px,1.25vw,22px);line-height:1;}
-    .elvax-video-compare:fullscreen .captions {font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding:10px 16px;}
-    .elvax-video-compare:fullscreen .blend-value {font-size:clamp(10px,.8vw,13px);}
-    .elvax-video-compare:fullscreen .video-panel,.elvax-video-compare:fullscreen .status {width:min(100%,var(--compare-video-width,960px));align-self:center;}
+    .elvax-video-compare:fullscreen .captions {--caption-inset:12px;font-size:clamp(16px,1.4vw,24px);line-height:1.4;padding-top:10px;padding-bottom:10px;}
+    .elvax-video-compare:fullscreen .generation-panel {font-size:clamp(11px,.75vw,14px);}
+    .elvax-video-compare:fullscreen .generation-open .media-row {grid-template-columns:minmax(0,1fr) 6px minmax(0,var(--generation-fullscreen-width,33.333333%));}
+    .elvax-video-compare:fullscreen .generation-header {height:57px;min-height:57px;padding:4px 12px;}
+    .elvax-video-compare:fullscreen .generation-header .generation-heading {font-size:clamp(15px,1vw,20px);}
+    .elvax-video-compare:fullscreen .generation-count {padding:4px 8px;font-size:clamp(12px,.75vw,16px);}
+    .elvax-video-compare:fullscreen .generation-controls {margin-bottom:16px;font-size:clamp(14px,.9vw,18px);}
+    .elvax-video-compare:fullscreen .generation-controls label {gap:10px;}
+    .elvax-video-compare:fullscreen .generation-controls input {flex-basis:18px;width:18px;height:18px;}
+    .elvax-video-compare:fullscreen .generation-controls input:checked::after {left:5px;top:2px;width:5px;height:8px;}
+    .elvax-video-compare:fullscreen .generation-toggle {flex-basis:48px;width:48px;height:48px;padding:8px;}
+    .elvax-video-compare:fullscreen .generation-icon {width:28px;height:28px;flex-basis:28px;}
+    .elvax-video-compare:fullscreen .generation-content {padding:12px;}
+    .elvax-video-compare:fullscreen .media-row {width:100%;}
+    .elvax-video-compare:fullscreen .blend-value {font-size:clamp(13px,1vw,16px);}
+    .elvax-video-compare:fullscreen .blend-control {height:30px;max-width:240px;}
+    .elvax-video-compare:fullscreen .video-panel,.elvax-video-compare:fullscreen .status {width:100%;}
     .elvax-video-compare:fullscreen .transport {gap:4px;padding:8px 6px;}
     .elvax-video-compare:fullscreen .transport button {flex-basis:36px;width:36px;height:44px;}
     .elvax-video-compare:fullscreen .transport button svg {width:30px;height:30px;}
@@ -162,7 +238,10 @@ function install(node) {
     .elvax-video-compare:fullscreen input[type=range] {height:5px;}
     .elvax-video-compare:fullscreen input[type=range]::-webkit-slider-thumb {width:12px;height:12px;}
     .elvax-video-compare:fullscreen input[type=range]::-moz-range-thumb {width:12px;height:12px;background:white;border:0;border-radius:50%;}
-    .elvax-video-compare:fullscreen .blend {background-size:100% 5px;}
+    .elvax-video-compare:fullscreen input.blend[type=range] {height:100%;}
+    .elvax-video-compare:fullscreen input.blend[type=range]::-webkit-slider-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-video-compare:fullscreen input.blend[type=range]::-moz-range-thumb {width:1px;height:1px;background:transparent;}
+    .elvax-video-compare:fullscreen input.blend[type=range] {background-size:100% 5px;}
     .elvax-video-compare:fullscreen .time-seek {background-size:100% 5px !important;}
   `;
   const buttons = document.createElement("div");
@@ -220,7 +299,10 @@ function install(node) {
   blend.setAttribute("aria-label", "Blend");
   const blendValue = document.createElement("output");
   blendValue.className = "blend-value";
-  blendValue.title = "Overlay blend";
+  const blendControl = document.createElement("div");
+  blendControl.className = "blend-control";
+  blendControl.title = "Click or drag to blend. Arrow keys adjust by 1%. Double-click resets to 50%.";
+  blendControl.append(blend, blendValue);
   blend.addEventListener("pointerdown", (event) => {
     if (event.button !== 0 || blend.disabled) return;
     event.stopPropagation();
@@ -244,9 +326,19 @@ function install(node) {
   panel.className = "video-panel";
   panel.style.cssText = "display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;background:#111;border-radius:4px;";
   const stage = document.createElement("div");
+  const emptyHint = document.createElement("div");
+  emptyHint.style.cssText = "position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;padding:20px;text-align:center;pointer-events:none;color:#aeb8c1;font-size:12px;line-height:1.5;";
+  const emptyTitle = document.createElement("div");
+  emptyTitle.textContent = "Drag and drop videos here, or connect video inputs and click Load.";
+  const emptyDetail = document.createElement("div");
+  emptyDetail.textContent = "Drop left for Before · Drop right for After";
+  emptyDetail.style.cssText = "font-size:10px;color:#77838e;";
+  emptyHint.append(emptyTitle, emptyDetail);
   stage.className = "stage";
   stage.tabIndex = 0;
   stage.style.cssText = "position:relative;display:flex;align-items:center;justify-content:center;flex:1;min-height:0;overflow:hidden;background:#111;outline:none;";
+  const mediaRow = document.createElement("div");
+  mediaRow.className = "media-row";
   const videos = [document.createElement("video"), document.createElement("video")];
   const videoStyle = "position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:transparent;pointer-events:none;";
   for (const video of videos) {
@@ -269,22 +361,303 @@ function install(node) {
   const message = document.createElement("div");
   message.className = "status";
   message.style.cssText = "flex:0 0 auto;box-sizing:border-box;padding:6px 8px;border:1px solid #ffffff24;border-radius:6px;background:#111d;text-align:center;color:#aaa;overflow-wrap:anywhere;";
-  const waitingMessage = 'Connect videos to the "before_video" and "after_video" sockets, then load them.';
   function updateStatus() {
-    const ready = Boolean(state().before && state().after);
-    message.textContent = ready ? "" : waitingMessage;
+    message.textContent = "";
   }
   const captions = document.createElement("div");
   captions.className = "captions";
-  captions.style.cssText = "display:flex;flex:0 0 auto;align-items:center;justify-content:space-between;gap:8px;color:#bbb;";
-  const labels = ["Before", "After"].map((text, index) => {
+  captions.style.cssText = "display:grid;flex:0 0 auto;align-items:center;gap:8px;color:#bbb;";
+  const labels = ["Before", "After"].map((text) => {
     const label = document.createElement("div");
     label.className = "caption-label";
     label.textContent = text;
-    label.style.cssText = index ? "margin-left:auto;" : "";
     return label;
   });
-  captions.append(labels[0], blend, blendValue, labels[1]);
+  const generationToggle = document.createElement("button");
+  generationToggle.type = "button";
+  generationToggle.className = "generation-toggle";
+  generationToggle.title = "Show Generation Differences";
+  generationToggle.setAttribute("aria-label", generationToggle.title);
+  generationToggle.innerHTML = '<svg class="generation-icon" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M3 3.5h4M3 7.5h3M3 11.5h2M10 3l3 3-3 3M13 6H8" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/><path d="M8 10.5h5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>';
+  generationToggle.setAttribute("aria-expanded", "false");
+  const generationCount = document.createElement("span");
+  generationCount.className = "generation-count";
+  const generationPanel = document.createElement("section");
+  generationPanel.className = "generation-panel";
+  generationPanel.setAttribute("aria-label", "Generation differences");
+  const generationHeader = document.createElement("div");
+  generationHeader.className = "generation-header";
+  const generationHeading = document.createElement("div");
+  generationHeading.className = "generation-heading";
+  generationHeading.textContent = "Generation Differences";
+  generationHeading.title = generationHeading.textContent;
+  generationHeader.append(generationHeading, generationCount);
+  const generationContent = document.createElement("div");
+  generationContent.className = "generation-content";
+  const generationColumns = document.createElement("div");
+  generationColumns.className = "generation-columns";
+  const generationTable = document.createElement("div");
+  generationTable.className = "generation-table";
+  const generationComparison = document.createElement("div");
+  generationComparison.className = "generation-comparison";
+  generationComparison.append(generationColumns, generationTable);
+  const generationControls = document.createElement("div");
+  generationControls.className = "generation-controls";
+  const showMatchingLabel = document.createElement("label");
+  const showMatching = document.createElement("input");
+  showMatching.type = "checkbox";
+  showMatchingLabel.append(showMatching, document.createTextNode("Show matching settings"));
+  generationControls.append(showMatchingLabel);
+  generationContent.append(generationControls, generationComparison);
+  generationPanel.append(generationHeader, generationContent);
+  const afterGroup = document.createElement("div");
+  afterGroup.className = "caption-after";
+  afterGroup.append(labels[1], generationToggle);
+  const generationResizer = document.createElement("div");
+  generationResizer.className = "generation-resizer";
+  generationResizer.tabIndex = 0;
+  generationResizer.setAttribute("role", "separator");
+  generationResizer.setAttribute("aria-orientation", "vertical");
+  generationResizer.setAttribute("aria-valuemin", "20");
+  generationResizer.setAttribute("aria-valuemax", "80");
+  generationResizer.setAttribute("aria-label", "Resize video and generation differences panel");
+  generationResizer.title = "Drag to resize. Double-click to reset.";
+  mediaRow.append(captions, stage, generationResizer, generationPanel);
+  let panelResize = null;
+  function syncPanelWidth() {
+    const normal = Number.isFinite(state().generationPanelWidth) ? state().generationPanelWidth : .5;
+    const fullscreen = Number.isFinite(state().generationFullscreenWidth) ? state().generationFullscreenWidth : 1 / 3;
+    mediaRow.style.setProperty("--generation-panel-width", `${normal * 100}%`);
+    mediaRow.style.setProperty("--generation-fullscreen-width", `${fullscreen * 100}%`);
+    generationResizer.setAttribute("aria-valuenow", String(Math.round((document.fullscreenElement === root ? fullscreen : normal) * 100)));
+  }
+  function resizePanel(ratio) {
+    const width = mediaRow.clientWidth;
+    const minimum = Math.min(.45, Math.max(.2, 150 / width));
+    const maximum = Math.max(.55, Math.min(.8, 1 - 126 / width));
+    const property = document.fullscreenElement === root ? "generationFullscreenWidth" : "generationPanelWidth";
+    state()[property] = Math.max(minimum, Math.min(maximum, ratio));
+    syncPanelWidth();
+  }
+  generationResizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const width = mediaRow.getBoundingClientRect().width;
+    panelResize = { pointerId: event.pointerId, x: event.clientX,
+      ratio: generationPanel.getBoundingClientRect().width / width };
+    generationResizer.setPointerCapture(event.pointerId);
+    generationResizer.focus({ preventScroll: true });
+  });
+  generationResizer.addEventListener("pointermove", (event) => {
+    if (panelResize?.pointerId !== event.pointerId) return;
+    event.stopPropagation();
+    resizePanel(panelResize.ratio + (panelResize.x - event.clientX) / mediaRow.getBoundingClientRect().width);
+  });
+  function finishPanelResize(event) {
+    if (panelResize?.pointerId !== event.pointerId) return;
+    panelResize = null;
+    if (generationResizer.hasPointerCapture(event.pointerId)) generationResizer.releasePointerCapture(event.pointerId);
+    node.graph?.change();
+  }
+  generationResizer.addEventListener("pointerup", finishPanelResize);
+  generationResizer.addEventListener("pointercancel", finishPanelResize);
+  generationResizer.addEventListener("lostpointercapture", finishPanelResize);
+  generationResizer.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizePanel(document.fullscreenElement === root ? 1 / 3 : .5);
+    node.graph?.change();
+  });
+  generationResizer.addEventListener("keydown", (event) => {
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    event.preventDefault();
+    event.stopPropagation();
+    const ratio = generationPanel.getBoundingClientRect().width / mediaRow.getBoundingClientRect().width;
+    resizePanel(ratio + (event.key === "ArrowLeft" ? 1 : -1) * (event.shiftKey ? .05 : .01));
+    node.graph?.change();
+  });
+  let generationOpen = Boolean(state().generationOpen);
+  function generationValue(item, value) {
+    const text = String(value).replace(/model strength\s+([-+]?(?:\d*\.)?\d+)/g, "strength: $1");
+    return item.name.startsWith("LoRA ") ? text.replace(/^(.+?)\s+\(([^()]*(?:strength)[^()]*)\)$/i, "($2) $1") : text;
+  }
+  function settingsMap(entry) {
+    return new Map((entry?.generation || []).flatMap((item) => item.name === "Seed"
+      ? item.values.map((value, index) => [`Seed ${index + 1}`, String(value)])
+      : item.name.startsWith("LoRA ") ? []
+        : [[item.name, item.values.map((value) => generationValue(item, value)).join(item.staged ? " > " : ", ")]]));
+  }
+  function loraSettings(entry) {
+    const occurrences = new Map();
+    return (entry?.generation || []).filter((item) => item.name.startsWith("LoRA ")).flatMap((item) =>
+      item.values.map((value) => {
+        const text = generationValue(item, value);
+        const name = text.replace(/^\(([^)]*strength[^)]*)\)\s*/i, "").trim();
+        const identity = name.replace(/[\\/]+/g, "/").toLocaleLowerCase();
+        const occurrence = occurrences.get(identity) || 0;
+        occurrences.set(identity, occurrence + 1);
+        const strengths = [...strengthValues(text)].sort(([a], [b]) => a.localeCompare(b));
+        return { key: `${identity}\u0000${occurrence}`, text, comparison: JSON.stringify([identity, strengths]) };
+      }));
+  }
+  const strengthPattern = /\b(clip strength|model strength|strength)\s*:?\s*([-+]?(?:\d+\.?\d*|\.\d+)(?:e[-+]?\d+)?)/gi;
+  function strengthValues(text) {
+    const details = text.match(/^\(([^)]*strength[^)]*)\)/i)?.[1] || "";
+    return new Map([...details.matchAll(strengthPattern)].map((match) => [match[1].toLowerCase() === "clip strength" ? "clip" : "model", Number(match[2])]));
+  }
+  function renderGenerationValue(element, text, highlightSetting, otherText, staged) {
+    if (staged) {
+      const otherValues = otherText.split(" > ");
+      text.split(" > ").forEach((text, index) => {
+        if (index) element.append(document.createTextNode(" > "));
+        const value = document.createElement("span");
+        if (text !== "Unknown" && text !== otherValues[index]) value.className = "generation-strength";
+        value.textContent = text;
+        element.append(value);
+      });
+      return;
+    }
+    if (highlightSetting && text !== "Unavailable") {
+      const value = document.createElement("span");
+      value.className = "generation-strength";
+      value.textContent = text;
+      element.append(value);
+      return;
+    }
+    const otherStrengths = strengthValues(otherText);
+    const detailsEnd = text.startsWith("(") ? text.indexOf(")") : -1;
+    let start = 0;
+    for (const match of text.matchAll(strengthPattern)) {
+      const label = match[1].toLowerCase() === "clip strength" ? "clip" : "model";
+      if (match.index > detailsEnd || Number(match[2]) === otherStrengths.get(label)) continue;
+      element.append(document.createTextNode(text.slice(start, match.index) + match[0].slice(0, -match[2].length)));
+      const number = document.createElement("span");
+      number.className = "generation-strength";
+      number.textContent = match[2];
+      element.append(number);
+      start = match.index + match[0].length;
+    }
+    element.append(document.createTextNode(text.slice(start)));
+  }
+  let generationPanelSignature = null;
+  function updateGenerationPanel() {
+    syncPanelWidth();
+    const bothLoaded = Boolean(state().before && state().after);
+    const visible = bothLoaded;
+    panel.classList.toggle("generation-open", visible && generationOpen);
+    generationPanel.style.display = visible && generationOpen ? "flex" : "none";
+    if (visible && generationOpen) generationHeader.prepend(generationToggle);
+    else afterGroup.append(generationToggle);
+    generationToggle.style.display = visible ? "inline-flex" : "none";
+    generationToggle.setAttribute("aria-expanded", String(visible && generationOpen));
+    generationToggle.title = generationOpen ? "Hide Generation Differences" : "Show Generation Differences";
+    generationToggle.setAttribute("aria-label", generationToggle.title);
+    if (!bothLoaded) {
+      generationPanelSignature = null;
+      generationCount.textContent = "";
+      return;
+    }
+    const signature = JSON.stringify([state().before.generation, state().after.generation, showMatching.checked]);
+    if (signature === generationPanelSignature) return;
+    generationPanelSignature = signature;
+    const beforeSettings = settingsMap(state().before);
+    const afterSettings = settingsMap(state().after);
+    const stagedNames = new Set([...(state().before.generation || []), ...(state().after.generation || [])]
+      .filter((item) => item.staged).map((item) => item.name));
+    const beforeLoras = new Map(loraSettings(state().before).map((item) => [item.key, item]));
+    const afterLoras = new Map(loraSettings(state().after).map((item) => [item.key, item]));
+    const loraNameToKey = new Map();
+    for (const key of new Set([...beforeLoras.keys(), ...afterLoras.keys()])) {
+      loraNameToKey.set(`LoRA ${loraNameToKey.size + 1}`, key);
+    }
+    const rank = (name) => {
+      const index = GENERATION_ORDER.indexOf(name.replace(/^(LoRA|Seed) \d+$/, "$1"));
+      return index < 0 ? GENERATION_ORDER.length : index;
+    };
+    const names = [...new Set([...beforeSettings.keys(), ...afterSettings.keys(), ...loraNameToKey.keys()])]
+      .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b, undefined, { numeric: true }));
+    const rows = names.map((name) => {
+      const seedIndex = /^Seed (\d+)$/.exec(name);
+      const seedLabels = seedIndex ? [state().before, state().after].map((entry) =>
+        entry.generation?.find((item) => item.name === "Seed")?.labels?.[Number(seedIndex[1]) - 1]) : [];
+      const label = [...new Set(seedLabels.filter(Boolean))].join(" / ") || name;
+      const loraKey = loraNameToKey.get(name);
+      const beforeLora = beforeLoras.get(loraKey);
+      const afterLora = afterLoras.get(loraKey);
+      const beforeValue = loraKey === undefined ? beforeSettings.get(name) : beforeLora?.text;
+      const afterValue = loraKey === undefined ? afterSettings.get(name) : afterLora?.text;
+      const staged = stagedNames.has(name);
+      const beforeStages = beforeValue?.split(" > ") || [];
+      const afterStages = afterValue?.split(" > ") || [];
+      if (staged) {
+        const length = Math.max(beforeStages.length, afterStages.length);
+        while (beforeStages.length < length) beforeStages.push("Unknown");
+        while (afterStages.length < length) afterStages.push("Unknown");
+      }
+      return {
+        name,
+        label,
+        staged,
+        before: staged ? beforeStages.join(" > ") : beforeValue || "Unavailable",
+        after: staged ? afterStages.join(" > ") : afterValue || "Unavailable",
+        differs: loraKey === undefined ? beforeValue !== afterValue : beforeLora?.comparison !== afterLora?.comparison,
+      };
+    });
+    const different = rows.filter((row) => row.differs);
+    generationCount.textContent = different.length ? `${different.length} ${different.length === 1 ? "change" : "changes"}` : "";
+    generationColumns.replaceChildren();
+    for (const text of ["Before", "After"]) {
+      const heading = document.createElement("div");
+      heading.className = "generation-heading";
+      heading.textContent = text;
+      generationColumns.append(heading);
+    }
+    generationTable.replaceChildren();
+    const shownRows = showMatching.checked ? rows : different;
+    generationComparison.classList.toggle("has-rows", shownRows.length > 0);
+    generationColumns.style.display = shownRows.length ? "grid" : "none";
+    for (const row of shownRows) {
+      const setting = document.createElement("div");
+      setting.className = "generation-row";
+      setting.classList.toggle("is-different", row.differs);
+      const name = document.createElement("div");
+      name.className = "generation-name";
+      name.textContent = row.label;
+      const values = document.createElement("div");
+      values.className = "generation-values";
+      for (const [text, otherText] of [[row.before, row.after], [row.after, row.before]]) {
+        const value = document.createElement("div");
+        value.className = "generation-value";
+        renderGenerationValue(value, text, row.differs && ["Steps", "Sampler", "Scheduler"].includes(row.name), otherText, row.staged);
+        values.append(value);
+      }
+      setting.append(name, values);
+      generationTable.append(setting);
+    }
+    if (!shownRows.length) {
+      const empty = document.createElement("div");
+      empty.className = "generation-empty";
+      empty.textContent = rows.length ? "No differences found in available metadata." : "Generation settings are unavailable for one or both videos.";
+      generationTable.append(empty);
+    }
+    generationControls.style.display = rows.length ? "flex" : "none";
+  }
+  generationToggle.addEventListener("click", () => {
+    generationOpen = !generationOpen;
+    state().generationOpen = generationOpen;
+    updateGenerationPanel();
+    syncCaptionsToVideo();
+    node.graph?.change();
+    node.graph?.setDirtyCanvas(true, true);
+  });
+  showMatching.checked = Boolean(state().showMatching);
+  showMatching.addEventListener("change", () => {
+    state().showMatching = showMatching.checked;
+    updateGenerationPanel();
+    node.graph?.change();
+  });
+  captions.append(labels[0], blendControl, afterGroup);
   const divider = document.createElement("div");
   divider.setAttribute("aria-hidden", "true");
   divider.tabIndex = -1;
@@ -364,34 +737,9 @@ function install(node) {
     if (playbackMaster) return playbackMaster;
     const audio = audioVideo();
     const target = seekRenderTarget ?? pendingTimelineSeek ?? renderedTime ?? state().time ?? 0;
-    if (audio.hasAttribute("src") && (!Number.isFinite(audio.duration) || target < audio.duration)) return audio;
-    return after.hasAttribute("src") && (!before.hasAttribute("src") || (after.duration || 0) > (before.duration || 0)) ? after : before;
+    if (!audio.error && audio.hasAttribute("src") && (!Number.isFinite(audio.duration) || target < audio.duration)) return audio;
+    return !after.error && after.hasAttribute("src") && (before.error || !before.hasAttribute("src") || (after.duration || 0) > (before.duration || 0)) ? after : before;
   }
-  function fitFullscreenWidth() {
-    if (disposed || document.fullscreenElement !== root) return;
-    const video = primary();
-    if (!video.videoWidth || !video.videoHeight) return;
-    const styles = getComputedStyle(root);
-    const availableWidth = root.clientWidth - parseFloat(styles.paddingLeft) - parseFloat(styles.paddingRight);
-    let aspect = video.videoWidth / video.videoHeight;
-    const controlsWidth = Math.floor(Math.min(availableWidth, stage.clientHeight * aspect));
-    if (state().mode === "side-by-side" && state().before && state().after) {
-      aspect = 2 * Math.max(aspect, after.videoWidth / after.videoHeight || aspect);
-    }
-    const width = Math.floor(Math.min(availableWidth, stage.clientHeight * aspect));
-    const value = `${width}px`;
-    if (width > 0 && root.style.getPropertyValue("--compare-video-width") !== value) {
-      root.style.setProperty("--compare-video-width", value);
-    }
-    const controlsValue = `${controlsWidth}px`;
-    if (controlsWidth > 0 && root.style.getPropertyValue("--compare-controls-width") !== controlsValue) {
-      root.style.setProperty("--compare-controls-width", controlsValue);
-    }
-  }
-  root.addEventListener("fullscreenchange", () => {
-    if (document.fullscreenElement === root) fitFullscreenWidth();
-    else root.style.removeProperty("--compare-video-width");
-  });
   function applyAudio() {
     const selected = audioVideo();
     const source = selected === after ? "after" : "before";
@@ -420,18 +768,47 @@ function install(node) {
   function videoBounds() {
     const width = stage.clientWidth;
     const height = stage.clientHeight;
-    const video = primary();
-    if (!video.videoWidth || !video.videoHeight) return { x: 0, y: 0, width, height };
-    const scale = Math.min(width / video.videoWidth, height / video.videoHeight);
-    const videoWidth = video.videoWidth * scale;
-    const videoHeight = video.videoHeight * scale;
-    return { x: (width - videoWidth) / 2, y: (height - videoHeight) / 2, width: videoWidth, height: videoHeight };
+    const stageRect = stage.getBoundingClientRect();
+    if (!stageRect.width || !stageRect.height) return { x: 0, y: 0, width, height };
+    const bounds = videos.flatMap((video, index) => {
+      if (!video.hasAttribute("src") || !video.videoWidth || !video.videoHeight) return [];
+      const rect = frameSurfaces[index].getBoundingClientRect();
+      const boxWidth = rect.width * width / stageRect.width;
+      const boxHeight = rect.height * height / stageRect.height;
+      if (!boxWidth || !boxHeight) return [];
+      const scale = Math.min(boxWidth / video.videoWidth, boxHeight / video.videoHeight);
+      const contentWidth = video.videoWidth * scale;
+      const contentHeight = video.videoHeight * scale;
+      return [{ x: (rect.left - stageRect.left) * width / stageRect.width + (boxWidth - contentWidth) / 2,
+        y: (rect.top - stageRect.top) * height / stageRect.height + (boxHeight - contentHeight) / 2,
+        width: contentWidth, height: contentHeight }];
+    });
+    if (!bounds.length) return { x: 0, y: 0, width, height };
+    const x = Math.min(...bounds.map((rect) => rect.x));
+    const y = Math.min(...bounds.map((rect) => rect.y));
+    return { x, y, width: Math.max(...bounds.map((rect) => rect.x + rect.width)) - x,
+      height: Math.max(...bounds.map((rect) => rect.y + rect.height)) - y };
+  }
+  function syncCaptionsToVideo() {
+    if (!captions.isConnected || !stage.clientWidth) return;
+    const bounds = videoBounds();
+    const captionRect = captions.getBoundingClientRect();
+    const stageRect = stage.getBoundingClientRect();
+    if (!stageRect.width) return;
+    const scale = stageRect.width / stage.clientWidth;
+    const left = (stageRect.left - captionRect.left) / scale + bounds.x;
+    const right = (captionRect.right - stageRect.left) / scale - bounds.x - bounds.width;
+    captions.style.setProperty("--caption-left", `${Math.max(0, left)}px`);
+    captions.style.setProperty("--caption-right", `${Math.max(0, right)}px`);
+    captions.style.transform = `translateY(${Math.max(0, bounds.y)}px)`;
   }
   function position(value) {
     state().position = Math.max(0, Math.min(100, Number(value) || 0));
     const both = Boolean(state().before && state().after);
     labels[0].classList.toggle("is-active", both && ((state().mode === "split" && state().position === 100) || (state().mode === "overlay" && state().blend === 0)));
     labels[1].classList.toggle("is-active", both && ((state().mode === "split" && state().position === 0) || (state().mode === "overlay" && state().blend === 1)));
+    generationComparison.classList.toggle("before-active", labels[0].classList.contains("is-active"));
+    generationComparison.classList.toggle("after-active", labels[1].classList.contains("is-active"));
     const bounds = videoBounds();
     const x = bounds.x + bounds.width * state().position / 100;
     if (state().mode === "split" && state().before && state().after) {
@@ -473,11 +850,12 @@ function install(node) {
       button.setAttribute("aria-pressed", String(key === mode));
       button.disabled = !both;
     }
-    blend.style.display = mode === "overlay" ? "block" : "none";
-    blendValue.style.display = mode === "overlay" ? "flex" : "none";
+    blendControl.style.display = mode === "overlay" ? "block" : "none";
+    captions.style.display = state().before || state().after ? "grid" : "none";
     blend.disabled = !both;
     blend.value = String(state().blend);
-    blendValue.textContent = `Overlay : ${Math.round(state().blend * 100)}%`;
+    blendValue.textContent = `Overlay · ${Math.round(state().blend * 100)}%`;
+    blendControl.style.setProperty("--blend-fill", `${Math.round(state().blend * 100)}%`);
     const beforeAfter = modeButtons.get("overlay");
     const percentage = Math.round(state().blend * 100);
     blend.setAttribute("aria-valuetext", `${percentage}% After blend`);
@@ -502,8 +880,9 @@ function install(node) {
     }
     labels[0].style.display = state().before ? "block" : "none";
     labels[1].style.display = state().after ? "block" : "none";
+    updateGenerationPanel();
     position(state().position ?? 50);
-    fitFullscreenWidth();
+    syncCaptionsToVideo();
   }
   function updateTime() {
     const duration = playbackDuration || comparisonDuration(videos);
@@ -522,7 +901,7 @@ function install(node) {
       pause();
       resumeAfterSeek = true;
     }
-    const active = videos.filter((video) => video.hasAttribute("src"));
+    const active = videos.filter((video) => video.hasAttribute("src") && !video.error);
     if (!active.length) {
       seekRenderTarget = null;
       updateTime();
@@ -533,7 +912,7 @@ function install(node) {
     if (cached.every(Boolean)) drawFrames(active, cached);
     clearQueuedFrames();
     seekRenderTarget = target;
-    for (const video of videos) {
+    for (const video of active) {
       video.playbackRate = 1;
       const time = Number.isFinite(video.duration) ? Math.min(target, video.duration) : target;
       if (video.readyState > 0 && (force || Math.abs(video.currentTime - time) > .001)) {
@@ -576,7 +955,7 @@ function install(node) {
     const current = renderedTime ?? state().time ?? 0;
     const frame = queue.find((entry) => entry.time <= current && current < entry.end) ??
       queue.reduce((closest, entry) => !closest || Math.abs(entry.time - current) < Math.abs(closest.time - current) ? entry : closest, null);
-    const interval = frame?.end > frame.time ? frame.end - frame.time : frameIntervals.get(clock) || 1 / 30;
+    const interval = frame && frame.end > frame.time ? frame.end - frame.time : frameIntervals.get(clock) || 1 / 30;
     // Seek inside the frame to avoid microsecond rounding across a frame boundary.
     const target = (frame?.time ?? current) + steps * interval + interval / 4;
     const duration = comparisonDuration(videos);
@@ -586,9 +965,9 @@ function install(node) {
   }
   function renderFramePair() {
     if (disposed) return;
-    const active = videos.filter((video) => video.hasAttribute("src"));
+    const active = videos.filter((video) => video.hasAttribute("src") && !video.error);
     if (!active.length) return;
-    if (active.some((video) => video.seeking || video.error)) return;
+    if (active.some((video) => video.seeking)) return;
     const clock = playbackVideo();
     const queue = frameQueues.get(clock);
     for (let index = queue.length - 1; index >= 0; index--) {
@@ -611,7 +990,7 @@ function install(node) {
       active.forEach((video, videoIndex) => {
         const entry = pair[videoIndex];
         const frames = frameQueues.get(video);
-        while (frames.length > 1 && frames[1].time < entry.time) frames.shift().frame.close();
+        while (frames.length > 1 && frames[1].time <= entry.time) frames.shift().frame.close();
       });
       renderedTime = candidate.time;
       if (!playing) state().time = renderedTime;
@@ -628,12 +1007,17 @@ function install(node) {
     }
   }
   function drawFrames(active, pair) {
+    let resized = false;
     active.forEach((video, index) => {
       const canvas = frameSurfaces[videos.indexOf(video)];
-      if (canvas.width !== video.videoWidth) canvas.width = video.videoWidth;
-      if (canvas.height !== video.videoHeight) canvas.height = video.videoHeight;
+      if (canvas.width !== video.videoWidth) { canvas.width = video.videoWidth; resized = true; }
+      if (canvas.height !== video.videoHeight) { canvas.height = video.videoHeight; resized = true; }
       canvas.getContext("2d").drawImage(pair[index].frame, 0, 0, canvas.width, canvas.height);
     });
+    if (resized) {
+      position(state().position ?? 50);
+      syncCaptionsToVideo();
+    }
   }
   function pause(alignFrames = false) {
     const pauseTime = alignFrames && playbackMaster
@@ -720,7 +1104,7 @@ function install(node) {
       ? selectedAudio
       : ready.reduce((longest, video) => (video.duration || 0) > (longest.duration || 0) ? video : longest);
     playbackDuration = comparisonDuration(ready);
-    if (playbackDuration && playbackMaster.currentTime >= playbackDuration - .025) {
+    if (playbackDuration && playbackMaster.currentTime >= playbackDuration - Math.min(.025, playbackDuration / 2)) {
       resumeAfterSeek = true;
       seekBoth(0);
       return;
@@ -755,6 +1139,7 @@ function install(node) {
     }
   }
   function show() {
+    emptyHint.style.display = state().before?.filename || state().after?.filename ? "none" : "flex";
     pause();
     pendingTimelineSeek = null;
     timelineDragging = false;
@@ -781,7 +1166,6 @@ function install(node) {
         video.load();
       }
     }
-    captions.style.display = state().before || state().after ? "flex" : "none";
     updateStatus();
     updateView();
     applyAudio();
@@ -790,7 +1174,7 @@ function install(node) {
     updateTime();
   }
   function captureFrame(video) {
-    if (disposed || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
+    if (disposed || video.error || video.seeking || video.readyState < 2 || !video.hasAttribute("src")) return;
     const frame = new VideoFrame(video);
     const time = frame.timestamp / 1000000;
     if (frame.duration > 0) frameIntervals.set(video, frame.duration / 1000000);
@@ -831,8 +1215,9 @@ function install(node) {
       const time = Number.isFinite(video.duration) ? Math.min(target, video.duration) : target;
       if (Math.abs(video.currentTime - time) > .001) video.currentTime = time;
       updateTime();
-      fitFullscreenWidth();
+      updateGenerationPanel();
       position(state().position ?? 50);
+      syncCaptionsToVideo();
     });
     video.addEventListener("timeupdate", updateTime);
     video.addEventListener("ended", () => {
@@ -918,7 +1303,21 @@ function install(node) {
     hideDivider();
   });
   stage.addEventListener("pointercancel", hideDivider);
+  function overBeforeAfterVideo(event) {
+    if (state().mode !== "overlay" || !state().before || !state().after) return false;
+    const rect = stage.getBoundingClientRect();
+    const bounds = videoBounds();
+    const x = (event.clientX - rect.left) * stage.clientWidth / rect.width;
+    const y = (event.clientY - rect.top) * stage.clientHeight / rect.height;
+    return x >= bounds.x && x <= bounds.x + bounds.width
+      && y >= bounds.y && y <= bounds.y + bounds.height;
+  }
   stage.addEventListener("pointerdown", (event) => {
+    if (event.button === 2 && overBeforeAfterVideo(event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     if (event.button !== 0) return;
     event.stopPropagation();
     stage.focus({ preventScroll: true });
@@ -927,6 +1326,12 @@ function install(node) {
     if (event.button !== 0) return;
     event.stopPropagation();
     togglePlayback();
+  });
+  stage.addEventListener("contextmenu", (event) => {
+    if (!overBeforeAfterVideo(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    modeButtons.get("overlay").click();
   });
   async function capture(role, button) {
     const source = inputNode(node, role);
@@ -943,8 +1348,9 @@ function install(node) {
         else throw new Error("No video is available from the connected node yet.");
       }
       if (source.type === "SaveVideo" || source.comfyClass === "SaveVideo") {
-        entry = app.nodeOutputs?.[source.id]?.images?.findLast((video) => video.type === "output" && video.filename);
-        if (!entry) throw new Error("No video is available from the connected node yet.");
+        const output = app.nodeOutputs?.[source.id]?.images?.findLast((video) => video.type === "output" && video.filename);
+        if (!output) throw new Error("No video is available from the connected node yet.");
+        entry = output;
       }
       if (!entry) throw new Error(`No video is available from the ${role === "before" ? "Before" : "After"} socket.`);
       const response = await api.fetchApi("/elvax/video-compare/capture", {
@@ -966,7 +1372,79 @@ function install(node) {
       }
     }
   }
+  const dropOverlay = document.createElement("div");
+  dropOverlay.style.cssText = "position:absolute;inset:0;z-index:100;display:none;gap:6px;padding:6px;background:#111d;pointer-events:none;";
+  const dropZones = ["before", "after"].map((role) => {
+    const zone = document.createElement("div");
+    zone.textContent = `Drop ${role === "before" ? "Before" : "After"} video`;
+    zone.style.cssText = "flex:1;display:flex;align-items:center;justify-content:center;border:2px dashed #60707c;border-radius:8px;background:#20262eee;color:#c5d4df;font-size:16px;font-weight:600;";
+    dropOverlay.append(zone);
+    return zone;
+  });
+  root.append(dropOverlay);
+  const videoFile = (file) => /\.(mp4|webm|mov|mkv|avi|m4v)$/i.test(file.name);
+  const dropRole = (event) => event.clientX < root.getBoundingClientRect().left + root.getBoundingClientRect().width / 2 ? "before" : "after";
+  root.addEventListener("dragover", (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.dataTransfer.dropEffect = "copy";
+    dropOverlay.style.display = "flex";
+    dropZones.forEach((zone, index) => {
+      const active = (dropRole(event) === "before" ? 0 : 1) === index;
+      zone.style.borderColor = active ? "#8bd4ff" : "#60707c";
+      zone.style.background = active ? "#294459ee" : "#20262eee";
+    });
+  });
+  root.addEventListener("dragleave", (event) => {
+    if (!root.contains(event.relatedTarget)) dropOverlay.style.display = "none";
+  });
+  async function uploadDroppedVideo(file, role) {
+    const request = ++captureRequests[role];
+    const button = captureButtons.get(role);
+    button.__elvaxLoading = true;
+    button.disabled = true;
+    message.textContent = `Loading ${role === "before" ? "Before" : "After"} video…`;
+    try {
+      const data = new FormData();
+      data.append("video", file);
+      const response = await api.fetchApi("/elvax/video-compare/upload", { method: "POST", body: data });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Could not load the dropped video.");
+      if (disposed || request !== captureRequests[role]) return;
+      state()[role] = result;
+      state().time = 0;
+      message.textContent = "";
+      show();
+      node.graph?.change();
+      node.graph?.setDirtyCanvas(true, true);
+    } catch (error) {
+      if (!disposed && request === captureRequests[role]) message.textContent = error.message;
+    } finally {
+      if (!disposed && request === captureRequests[role]) {
+        button.__elvaxLoading = false;
+        updateLoadButtons();
+      }
+    }
+  }
+  root.addEventListener("drop", (event) => {
+    if (!event.dataTransfer?.types.includes("Files")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    dropOverlay.style.display = "none";
+    const files = [...event.dataTransfer.files].filter(videoFile);
+    if (!files.length) {
+      message.textContent = "Drop a video file (MP4, WebM, MOV, MKV, AVI, or M4V).";
+      return;
+    }
+    if (files.length > 1) {
+      uploadDroppedVideo(files[0], "before");
+      uploadDroppedVideo(files[1], "after");
+    } else uploadDroppedVideo(files[0], dropRole(event));
+  });
   for (const role of ["before", "after"]) {
+    const control = document.createElement("div");
+    control.className = "capture-control";
     const button = document.createElement("button");
     button.type = "button";
     button.className = "capture";
@@ -974,10 +1452,29 @@ function install(node) {
     button.title = `Load a video from the ${role}_video socket.`;
     button.addEventListener("click", () => capture(role, button));
     captureButtons.set(role, button);
-    buttons.append(button);
+    const autoLabel = document.createElement("label");
+    autoLabel.className = "capture-auto";
+    autoLabel.title = `Automatically load the ${role === "before" ? "Before" : "After"} video when the workflow produces a result.`;
+    const auto = document.createElement("input");
+    auto.type = "checkbox";
+    auto.checked = Boolean(state()[`${role}Auto`]);
+    auto.setAttribute("aria-label", `Auto load ${role} video`);
+    auto.addEventListener("change", () => {
+      state()[`${role}Auto`] = auto.checked;
+      node.graph?.change();
+      node.graph?.setDirtyCanvas(true, true);
+    });
+    autoLabel.addEventListener("pointerdown", (event) => {
+      if (event.button === 0) event.stopPropagation();
+    });
+    autoLabel.append(auto, document.createTextNode("Auto"));
+    autoCheckboxes.set(role, auto);
+    control.append(button, autoLabel);
+    buttons.append(control);
   }
   function updateLoadButtons() {
     for (const [role, button] of captureButtons) {
+      autoCheckboxes.get(role).checked = Boolean(state()[`${role}Auto`]);
       const input = node.inputs?.[inputSlot(node, role)];
       const available = Boolean(inputNode(node, role));
       button.title = input?.link == null
@@ -1005,6 +1502,13 @@ function install(node) {
   api.addEventListener(ROUTE_CHANGED, updateLoadButtons);
   root.addEventListener("wheel", (event) => {
     event.preventDefault();
+    if (generationPanel.contains(event.target) && generationContent.scrollHeight > generationContent.clientHeight) {
+      event.stopPropagation();
+      const step = event.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? generationContent.clientHeight : 1;
+      generationContent.scrollTop += event.deltaY * step;
+      return;
+    }
     app.canvas._mousewheel_callback(event);
   }, { capture: true, passive: false });
   root.addEventListener("pointerdown", (event) => {
@@ -1038,8 +1542,8 @@ function install(node) {
       togglePlayback();
     }
   });
-  stage.append(before, frameSurfaces[0], afterClip, divider);
-  panel.append(modes, captions, stage, transport);
+  stage.append(before, frameSurfaces[0], afterClip, divider, emptyHint);
+  panel.append(modes, mediaRow, transport);
   root.append(style, buttons, panel, message);
   const widget = node.addDOMWidget("video_compare", "div", root, {
     serialize: false, hideOnZoom: false, getMinHeight: () => MIN_HEIGHT,
@@ -1066,11 +1570,25 @@ function install(node) {
   }
   const sizeObserver = new ResizeObserver(() => {
     enforceMinimumSize();
-    fitFullscreenWidth();
+    syncPanelWidth();
     position(state().position ?? 50);
+    syncCaptionsToVideo();
   });
   sizeObserver.observe(root);
   sizeObserver.observe(stage);
+  let compareWasFullscreen = document.fullscreenElement === root;
+  function onFullscreenChange() {
+    const isFullscreen = document.fullscreenElement === root;
+    if (isFullscreen === compareWasFullscreen) return;
+    compareWasFullscreen = isFullscreen;
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      if (disposed) return;
+      syncPanelWidth();
+      position(state().position ?? 50);
+      syncCaptionsToVideo();
+    }));
+  }
+  document.addEventListener("fullscreenchange", onFullscreenChange);
   node.setSize([560, 560]);
   const oldSerialized = node.onSerialize;
   node.onSerialize = function (data) {
@@ -1089,6 +1607,8 @@ function install(node) {
     const result = oldConfigured?.apply(this, arguments);
     this.properties.elvaxVideoCompare ||= { position: 50, volume: 1, muted: false, loop: true, audioSource: null };
     this.properties.elvaxVideoCompare = JSON.parse(JSON.stringify(this.properties.elvaxVideoCompare));
+    generationOpen = Boolean(state().generationOpen);
+    showMatching.checked = Boolean(state().showMatching);
     migrateAudioDefault();
     updateLoadButtons();
     enforceMinimumSize();
@@ -1098,12 +1618,25 @@ function install(node) {
   const oldExecuted = node.onExecuted;
   node.onExecuted = function (data) {
     const result = oldExecuted?.apply(this, arguments);
+    let autoLoaded = false;
     for (const role of ["before", "after"]) {
       const entry = data?.[`elvax_compare_${role}_video`]?.[0];
       if (entry) {
         state()[`${role}Latest`] = entry;
         state()[`${role}LatestKey`] = inputKey(this, role);
+        if (state()[`${role}Auto`] && inputNode(this, role)) {
+          ++captureRequests[role];
+          captureButtons.get(role).__elvaxLoading = false;
+          state()[role] = entry;
+          autoLoaded = true;
+        }
       }
+    }
+    if (autoLoaded) {
+      state().time = 0;
+      show();
+      updateLoadButtons();
+      this.graph?.setDirtyCanvas(true, true);
     }
     updateStatus();
     return result;
@@ -1112,6 +1645,7 @@ function install(node) {
   node.onRemoved = function () {
     disposed = true;
     api.removeEventListener(ROUTE_CHANGED, updateLoadButtons);
+    document.removeEventListener("fullscreenchange", onFullscreenChange);
     sizeObserver.disconnect();
     pause();
     clearQueuedFrames();

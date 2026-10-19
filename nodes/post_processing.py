@@ -27,7 +27,6 @@ class PostProcessing:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "images": ("IMAGE",),
                 "upscale": ("BOOLEAN", {"default": True}),
                 "upscale_method": (["lanczos"], {"default": "lanczos"}),
                 "upscale_by": ("FLOAT", {"default": 2.0, "min": 0.01, "max": 8.0, "step": 0.01}),
@@ -59,6 +58,8 @@ class PostProcessing:
                 }),
             },
             "optional": {
+                "video": ("VIDEO", {"tooltip": "Optional video source. When connected, its frames and frame rate are used instead of images."}),
+                "images": ("IMAGE", {"tooltip": "Image batch used when no video is connected."}),
                 "audio_pass": ("AUDIO", {"tooltip": "Optional audio input, passed through unchanged."}),
             },
             "hidden": {"unique_id": "UNIQUE_ID"},
@@ -212,13 +213,21 @@ class PostProcessing:
                 output.mux(stream.encode(None))
                 timings["Encoding"] += time.perf_counter() - started
 
-    def process(self, images, upscale=True, upscale_method="lanczos", upscale_by=2.0,
+    def process(self, images=None, upscale=True, upscale_method="lanczos", upscale_by=2.0,
                 interpolate=True, original_fps=24.0, interpolate_by=2,
                 grain=True, grain_intensity=0.025, saturation_mix=0.25,
                 batching_mode="normal (64)", custom_batch_size=16, audio_pass=None, unique_id=None,
-                dual_pass_rife=False, compress=True, crf=18):
+                dual_pass_rife=False, compress=True, crf=18, video=None):
         started = time.perf_counter()
         workflow_started = self._workflow_started
+        if video is not None:
+            components = video.get_components()
+            images = components.images
+            original_fps = float(components.frame_rate)
+            if audio_pass is None:
+                audio_pass = components.audio
+        if images is None:
+            raise ValueError("Turbo Post Processing needs a video or image batch.")
         frame_count = int(images.shape[0])
         if frame_count == 0:
             raise ValueError("Turbo Post Processing needs at least one frame.")
